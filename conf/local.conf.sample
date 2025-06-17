@@ -272,6 +272,10 @@ PACKAGE_FEED_URIS = "http://192.168.17.63:80"
 EXTRA_IMAGE_FEATURES += " package-management "
 IMAGE_ROOTFS_EXTRA_SPACE = "102400"
 
+DISTRO_FEATURES:append = " systemd"
+VIRTUAL-RUNTIME_init_manager = "systemd"
+VIRTUAL-RUNTIME_initscripts = ""
+
 # Use systemd as init manager
 #INIT_MANAGER = "systemd"
 

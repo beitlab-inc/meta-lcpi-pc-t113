@@ -12,5 +12,4 @@ BBLAYERS ?= " \
   ##OEROOT##/../poky/meta-mangopi \
   ##OEROOT##/../poky/meta-arm/meta-arm-toolchain \
   ##OEROOT##/../poky/meta-openembedded/meta-oe \
-  ##OEROOT##/../poky/meta-qt5 \
 "
