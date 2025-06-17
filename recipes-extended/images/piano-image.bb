@@ -10,6 +10,7 @@ IMAGE_INSTALL = "\
     packagegroup-core-full-cmdline \
     systemd-serialgetty \
     util-linux-rfkill \
+    dpkg apt libgpiod-tools \
     ${CORE_IMAGE_EXTRA_INSTALL} \
     "
 
