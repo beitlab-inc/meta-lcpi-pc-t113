@@ -29,9 +29,5 @@ sudo dd if=tmp/deploy/images/lcpi-pc-t113/lcpi-pc-t113-image-lcpi-pc-t113.wic of
 ```
 5. Enjoy :-)
 
-# View
-Here is what it looks like (using 800x480 LCD)
-![POKY](docs/poky.jpg)
-
 # More
 I want to thanks all contributors of [AWboot](https://github.com/szemzoa/awboot). Their bootloader and kernel patches are directly used in this layer. Also Thanks to ArashEM https://github.com/ArashEM/meta-mangopi from which this project is inspired.
