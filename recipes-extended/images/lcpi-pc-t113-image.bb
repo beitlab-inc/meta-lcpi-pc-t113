@@ -1,4 +1,4 @@
-DESCRIPTION = "piano image for Mangopi-MQ board(T113)"
+DESCRIPTION = "image for lcpi-pc-t113 board(T113)"
 
 SERIAL_CONSOLE = "115200;ttyS0"
 CORE_IMAGE_EXTRA_INSTALL += "util-linux"
