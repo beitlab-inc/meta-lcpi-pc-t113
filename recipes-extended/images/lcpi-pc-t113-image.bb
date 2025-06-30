@@ -4,6 +4,7 @@ SERIAL_CONSOLE = "115200;ttyS0"
 CORE_IMAGE_EXTRA_INSTALL += "util-linux"
 
 IMAGE_INSTALL = "\
+    mycpp \
     packagegroup-core-boot \
     wireless-regdb \
     wpa-supplicant \
@@ -11,6 +12,7 @@ IMAGE_INSTALL = "\
     systemd-serialgetty \
     util-linux-rfkill \
     dpkg apt libgpiod-tools \
+    alsa-utils alsa-lib curl wget \
     ${CORE_IMAGE_EXTRA_INSTALL} \
     "
 

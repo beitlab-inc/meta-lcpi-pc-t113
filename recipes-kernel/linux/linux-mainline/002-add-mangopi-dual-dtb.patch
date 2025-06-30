@@ -1690,7 +1690,7 @@ index 0000000..2acf251
 +*/
 +	widgets = "Microphone", "Headset Microphone",
 +		  "Headphone", "Headphone Jack";
-+	status = "disabled";
++	status = "okay";
 +};
 +
 +&usb_otg {
