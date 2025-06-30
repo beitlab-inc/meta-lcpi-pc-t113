@@ -5,6 +5,7 @@ CORE_IMAGE_EXTRA_INSTALL += "util-linux"
 
 IMAGE_INSTALL = "\
     mycpp \
+    piano-player \
     packagegroup-core-boot \
     wireless-regdb \
     wpa-supplicant \
