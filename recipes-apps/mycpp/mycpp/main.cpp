@@ -69,6 +69,7 @@ void cleanup() {
 }
 
 int main() {
+    std::cout << "Hola soy piano feliz\n";
     if (!setup()) {
         std::cerr << "Failed to setup GPIOs\n";
         return 1;

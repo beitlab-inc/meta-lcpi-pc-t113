@@ -1,11 +1,13 @@
 DESCRIPTION = "image for lcpi-pc-t113 board(T113)"
 
 SERIAL_CONSOLE = "115200;ttyS0"
-CORE_IMAGE_EXTRA_INSTALL += "util-linux"
+CORE_IMAGE_EXTRA_INSTALL += " util-linux"
 
+# alsa-tools linux-firmware
 IMAGE_INSTALL = "\
     mycpp \
     piano-player \
+    myserial \
     packagegroup-core-boot \
     wireless-regdb \
     wpa-supplicant \
