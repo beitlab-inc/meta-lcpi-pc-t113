@@ -1,0 +1,26 @@
+[Unit]
+Description=Power-on chime (LCPI-PC-T113)
+Documentation=man:bootchime(1)
+# Play as early as the sound stack is usable, in parallel with the boot splash.
+DefaultDependencies=no
+After=alsa-restore.service sysinit.target
+# alsa-unmute forces the (muted-at-boot) sun20i output path on and waits for the
+# card, so the chime is actually audible on a fresh boot.
+Wants=alsa-unmute.service
+After=alsa-unmute.service
+Wants=sysinit.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+# The sun20i codec comes up muted; the chime path is DAC -> Headphone amp
+# (PAM8301) -> speaker, so make sure those are enabled before playing. The
+# leading '-' means a missing/renamed control never fails the unit.
+ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' on
+ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' 100%
+ExecStartPre=-/usr/bin/amixer -q sset 'DAC' 100%
+ExecStart=/usr/bin/bootchime
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

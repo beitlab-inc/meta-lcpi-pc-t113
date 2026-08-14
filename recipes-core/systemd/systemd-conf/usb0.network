@@ -1,0 +1,17 @@
+[Match]
+Name=usb0
+
+[Network]
+# Board side of the OTG USB-Ethernet (CDC-ECM) link to a PC/Mac.
+Address=192.168.20.2/24
+# Run a tiny DHCP server on the link so the host (Mac/Linux/Windows) gets an
+# address automatically - no manual IP setup needed. Then: ssh root@192.168.20.2
+DHCPServer=yes
+# The gadget link may report no carrier until the host enumerates it; configure
+# the address anyway so we are ready the instant the cable is plugged in.
+ConfigureWithoutCarrier=yes
+
+[DHCPServer]
+PoolOffset=10
+PoolSize=20
+EmitDNS=no

@@ -1,0 +1,21 @@
+[Unit]
+Description=BEITLAB USB OTG CDC-ECM network gadget
+DefaultDependencies=no
+# configfs must be mounted before we can create the gadget.
+After=sys-kernel-config.mount
+Wants=sys-kernel-config.mount
+# Create usb0 before the network stack so systemd-networkd (usb0.network) can
+# configure it and start the DHCP server for the host.
+Before=network-pre.target systemd-networkd.service
+Wants=network-pre.target
+ConditionPathExists=/sys/class/udc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/usb-gadget-ecm.sh
+# Unbind on stop so the port can be re-bound / used in host mode.
+ExecStop=-/bin/sh -c 'echo > /sys/kernel/config/usb_gadget/beitlab/UDC'
+
+[Install]
+WantedBy=sysinit.target

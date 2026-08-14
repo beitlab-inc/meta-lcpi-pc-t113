@@ -1,0 +1,16 @@
+[Unit]
+Description=Force the sun20i codec output path on at boot (LCPI-PC-T113)
+# Run early, but only makes sense once userspace + any saved ALSA state is up.
+DefaultDependencies=no
+After=sysinit.target alsa-restore.service
+Wants=sysinit.target
+# Guarantee the codec is unmuted before the chime plays or the game opens the PCM.
+Before=multi-user.target boot-chime.service pingpong.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/lcpi-audio-unmute.sh
+
+[Install]
+WantedBy=multi-user.target

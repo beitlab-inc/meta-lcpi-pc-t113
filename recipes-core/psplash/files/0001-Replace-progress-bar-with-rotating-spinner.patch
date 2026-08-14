@@ -1,0 +1,179 @@
+From: LCPI board bring-up <dev@lcpi.invalid>
+Date: Thu, 13 Aug 2026 18:00:00 -0500
+Subject: [PATCH] Replace the progress bar with a rotating spinner
+
+The LCPI-PC-T113 boot splash shows a centred company logo. Boot progress is
+not metered on this board, so an indeterminate rotating "spinner" reads better
+than a progress bar that jumps around.
+
+This drops the progress-bar border image and psplash_draw_progress() call from
+the initial scene and instead draws a ring of fading dots that rotates once per
+~1 second. The animation is driven from psplash_main() by giving the fifo
+select() a short timeout and advancing one frame on each wake-up. The PROGRESS
+fifo command is kept as a no-op so existing "psplash-write PROGRESS n" callers
+still work.
+
+Upstream-Status: Inappropriate [board-specific UI customisation]
+
+--- a/psplash.c
++++ b/psplash.c
+@@ -96,6 +96,60 @@
+ 		width, barwidth);
+ }
+ 
++/* --- Rotating "spinner" activity indicator (replaces the progress bar) ---
++ *
++ * A ring of PSPLASH_SPINNER_DOTS dots is drawn where the progress bar used to
++ * be. Each frame one dot is the bright "head" and the trailing dots fade back
++ * towards the background colour, giving a smooth rotating comet. It only uses
++ * psplash_fb_draw_rect() and a fixed sin/cos table, so no libm-at-runtime maths
++ * and no extra assets are needed.
++ */
++#define PSPLASH_SPINNER_DOTS        12
++#define PSPLASH_SPINNER_RADIUS      18   /* ring radius, pixels               */
++#define PSPLASH_SPINNER_DOT_SIZE    6    /* dot square side, pixels           */
++#define PSPLASH_SPINNER_INTERVAL_MS 80   /* time between frames (~12.5 fps)   */
++
++void
++psplash_draw_spinner (PSplashFB *fb, int frame)
++{
++  /* Unit-circle offsets for 12 evenly spaced dots (30 degrees apart). */
++  static const float cosv[PSPLASH_SPINNER_DOTS] = {
++     1.000f,  0.866f,  0.500f,  0.000f, -0.500f, -0.866f,
++    -1.000f, -0.866f, -0.500f,  0.000f,  0.500f,  0.866f };
++  static const float sinv[PSPLASH_SPINNER_DOTS] = {
++     0.000f,  0.500f,  0.866f,  1.000f,  0.866f,  0.500f,
++     0.000f, -0.500f, -0.866f, -1.000f, -0.866f, -0.500f };
++
++  /* Bright brand-green head fades to the black background (green comet). */
++  static const int fg[3] = { 0x3d, 0xe0, 0x7a };
++  static const int bg[3] = { 0x00, 0x00, 0x00 };
++
++  int cx   = fb->width / 2;
++  int cy   = SPLIT_LINE_POS(fb) + PSPLASH_SPINNER_RADIUS + 8;
++  int head = frame % PSPLASH_SPINNER_DOTS;
++  int i;
++
++  for (i = 0; i < PSPLASH_SPINNER_DOTS; i++)
++    {
++      int   trailing = (head - i + PSPLASH_SPINNER_DOTS) % PSPLASH_SPINNER_DOTS;
++      float level    = (float) trailing / (float) (PSPLASH_SPINNER_DOTS - 1);
++
++      int r = fg[0] + (int) ((bg[0] - fg[0]) * level);
++      int g = fg[1] + (int) ((bg[1] - fg[1]) * level);
++      int b = fg[2] + (int) ((bg[2] - fg[2]) * level);
++
++      int dx = cx + (int) (cosv[i] * PSPLASH_SPINNER_RADIUS)
++               - PSPLASH_SPINNER_DOT_SIZE / 2;
++      int dy = cy - (int) (sinv[i] * PSPLASH_SPINNER_RADIUS)
++               - PSPLASH_SPINNER_DOT_SIZE / 2;
++
++      psplash_fb_draw_rect (fb, dx, dy,
++                            PSPLASH_SPINNER_DOT_SIZE,
++                            PSPLASH_SPINNER_DOT_SIZE,
++                            (uint8) r, (uint8) g, (uint8) b);
++    }
++}
++
+ static int 
+ parse_command (PSplashFB *fb, char *string)
+ {
+@@ -110,10 +164,9 @@
+ 
+   if (!strcmp(command,"PROGRESS")) 
+     {
+-      char *arg = strtok(NULL, "\0");
+-
+-      if (arg)
+-        psplash_draw_progress (fb, atoi(arg));
++      /* Progress bar removed in favour of the rotating spinner; swallow the
++       * value so existing "psplash-write PROGRESS n" callers still work. */
++      (void) strtok(NULL, "\0");
+     } 
+   else if (!strcmp(command,"MSG")) 
+     {
+@@ -141,31 +194,34 @@
+   char          *end;
+   char          *cmd;
+   char           command[2048];
++  int            frame = 0;
+ 
+-  tv.tv_sec = timeout;
+-  tv.tv_usec = 0;
+-
+-  FD_ZERO(&descriptors);
+-  FD_SET(pipe_fd, &descriptors);
++  (void) timeout;
+ 
+   end = command;
+ 
+   while (1) 
+     {
+-      if (timeout != 0) 
+-	err = select(pipe_fd+1, &descriptors, NULL, NULL, &tv);
+-      else
+-	err = select(pipe_fd+1, &descriptors, NULL, NULL, NULL);
+-      
+-      if (err <= 0) 
++      /* Wake up every PSPLASH_SPINNER_INTERVAL_MS to advance the spinner, or
++       * sooner if a command arrives on the fifo. */
++      FD_ZERO(&descriptors);
++      FD_SET(pipe_fd, &descriptors);
++      tv.tv_sec  = 0;
++      tv.tv_usec = PSPLASH_SPINNER_INTERVAL_MS * 1000;
++
++      err = select(pipe_fd+1, &descriptors, NULL, NULL, &tv);
++
++      if (err < 0)
++	return;
++
++      if (err == 0)
+ 	{
+-	  /*
+-	  if (errno == EINTR)
+-	    continue;
+-	  */
+-	  return;
++	  /* No fifo activity: draw the next spinner frame and keep going. */
++	  psplash_draw_spinner (fb, frame++);
++	  psplash_fb_flip (fb, 0);
++	  continue;
+ 	}
+-      
++
+       length += read (pipe_fd, end, sizeof(command) - (end - command));
+ 
+       if (length == 0) 
+@@ -204,12 +260,6 @@
+ 
+     out:
+       end = &command[length];
+-    
+-      tv.tv_sec = timeout;
+-      tv.tv_usec = 0;
+-      
+-      FD_ZERO(&descriptors);
+-      FD_SET(pipe_fd,&descriptors);
+     }
+ 
+   return;
+@@ -311,17 +361,8 @@
+ 			 POKY_IMG_ROWSTRIDE,
+ 			 POKY_IMG_RLE_PIXEL_DATA);
+ 
+-  /* Draw progress bar border */
+-  psplash_fb_draw_image (fb, 
+-			 (fb->width  - BAR_IMG_WIDTH)/2, 
+-			 SPLIT_LINE_POS(fb),
+-			 BAR_IMG_WIDTH,
+-			 BAR_IMG_HEIGHT,
+-			 BAR_IMG_BYTES_PER_PIXEL,
+-			 BAR_IMG_ROWSTRIDE,
+-			 BAR_IMG_RLE_PIXEL_DATA);
+-
+-  psplash_draw_progress (fb, 0);
++  /* Draw the first spinner frame (replaces the progress bar + its border). */
++  psplash_draw_spinner (fb, 0);
+ 
+ #ifdef PSPLASH_STARTUP_MSG
+   psplash_draw_msg (fb, PSPLASH_STARTUP_MSG);

@@ -49,12 +49,47 @@ MISC_TOOLS += " \
     lsb-release \
     usbutils \
     libusbgx \
+    usbgadget \
+"
+
+# -----------------------------------------------------------------------------
+# Audio / video / display + game userspace (folded in from meta-lcpi-av)
+# -----------------------------------------------------------------------------
+# The T113-S3 has no 3D GPU (only the 2D G2D + display engine), so the graphics
+# story is deliberately 2D: framebuffer console, KMS/DRM, GStreamer to the LCD
+# (fbdevsink / kmssink), audio out the analog codec. No X11/Wayland/GLES stack
+# (too heavy for 128MB and unaccelerated). "pingpong" is a tiny UART-controlled
+# framebuffer game that boots on the LCD (see recipes-games/pingpong).
+AV_TOOLS = " \
+    alsa-utils \
+    alsa-tools \
+    alsa-state \
+    alsa-unmute \
+    gstreamer1.0 \
+    gstreamer1.0-meta-base \
+    gstreamer1.0-meta-audio \
+    gstreamer1.0-meta-video \
+    gstreamer1.0-plugins-base-audiotestsrc \
+    gstreamer1.0-plugins-base-videotestsrc \
+    gstreamer1.0-plugins-bad-fbdevsink \
+    gstreamer1.0-plugins-bad-kms \
+    gstreamer1.0-plugins-good-video4linux2 \
+    libdrm-tests \
+    fbida \
+    v4l-utils \
+    evtest \
+    zram \
+    pingpong \
+    psplash \
+    psplash-default \
+    boot-chime \
 "
 
 IMAGE_INSTALL += " \
     ${WIFI_TOOLS} \
     ${FB_TOOLS} \
     ${MISC_TOOLS} \
+    ${AV_TOOLS} \
 "
 
 set_8189fs_loglevel(){
@@ -62,5 +97,31 @@ set_8189fs_loglevel(){
     echo 'options 8189fs rtw_drv_log_level=1' > ${IMAGE_ROOTFS}/etc/modprobe.d/8189fs.conf
 }
 
-ROOTFS_POSTPROCESS_COMMAND += "set_8189fs_loglevel;"
+# The kernel has no NFSD, so systemd's static proc-fs-nfsd.mount (pulled in via
+# nfs-utils) fails at boot with "Failed to mount NFSD configuration filesystem".
+# Harmless; mask it so the boot is clean.
+mask_nfsd_mount() {
+    install -d ${IMAGE_ROOTFS}${sysconfdir}/systemd/system
+    ln -sf /dev/null ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/proc-fs-nfsd.mount
+}
+
+# meta-oe's zram recipe ships BOTH a SysV init script (wrapped by
+# systemd-sysv-generator as "zram.service", "LSB: Increase Virtual Swap...") and
+# native systemd units (zram-swap.service + dev-zram0.swap). The LSB one runs
+# "modprobe zram", which fails because zram is built into the kernel, so it shows
+# up as a red [FAILED] at boot. Mask just the LSB-wrapped unit; the native
+# systemd zram-swap path (which has the lz4 compressor) does the real work.
+mask_lsb_zram() {
+    install -d ${IMAGE_ROOTFS}${sysconfdir}/systemd/system
+    ln -sf /dev/null ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/zram.service
+}
+
+# NOTE: the LCD no longer shows a login prompt - it boots into the "pingpong"
+# framebuffer game (pingpong.service Conflicts= getty@tty1 + serial-getty@ttyS0,
+# grabs /dev/tty1 in KD_GRAPHICS and reads controls from /dev/ttyS0). To get a
+# console back: SSH in and "systemctl stop pingpong", then
+# "systemctl start serial-getty@ttyS0". To prefer a login prompt on the LCD
+# instead, set SYSTEMD_AUTO_ENABLE="disable" in recipes-games/pingpong.
+
+ROOTFS_POSTPROCESS_COMMAND += "set_8189fs_loglevel; mask_nfsd_mount; mask_lsb_zram;"
 IMAGE_ROOTFS_EXTRA_SPACE_append = "${@bb.utils.contains("DISTRO_FEATURES", "systemd", " + 4096", "" ,d)}"

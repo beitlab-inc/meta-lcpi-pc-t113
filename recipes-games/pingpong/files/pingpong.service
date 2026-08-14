@@ -1,0 +1,38 @@
+[Unit]
+Description=UART-controlled Pong on the LCD (framebuffer kiosk)
+# Own the LCD console VT and the serial port instead of a login prompt.
+Conflicts=getty@tty1.service serial-getty@ttyS0.service
+# Start after the psplash boot splash so we take over the panel only once the
+# company logo + progress bar have done their job.
+After=systemd-user-sessions.service getty@tty1.service serial-getty@ttyS0.service
+After=psplash-start.service psplash-systemd.service
+# The sun20i codec boots muted; alsa-unmute forces the output path on (and waits
+# for the card) before the game opens the PCM, so sound works on every boot.
+Wants=alsa-unmute.service
+After=alsa-unmute.service
+# The codec PCM is single-client. Start the game only after the one-shot boot
+# chime has finished and released the device, so the game can open it (it also
+# retries at runtime as a safety net).
+After=boot-chime.service
+
+[Service]
+Type=simple
+# Tell psplash to quit and release /dev/fb0 before we draw. Leading '-' so a
+# missing/already-gone psplash is not an error; the short sleep lets it munmap
+# the framebuffer and restore the VT before pingpong grabs it.
+ExecStartPre=-/usr/bin/psplash-write "QUIT"
+ExecStartPre=-/bin/sleep 1
+# The sun20i codec boots muted; the game's sound effects use the same
+# DAC -> Headphone amp path as the boot chime, so unmute it first. Leading '-'
+# means a missing/renamed control never blocks the game from starting.
+ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' on
+ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' 100%
+ExecStartPre=-/usr/bin/amixer -q sset 'DAC' 100%
+# Draw to the LCD (/dev/fb0), read controls from the board UART (/dev/ttyS0),
+# and grab the LCD's virtual terminal (/dev/tty1) for graphics mode.
+ExecStart=/usr/bin/pingpong -i /dev/ttyS0 -f /dev/fb0 -t /dev/tty1
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
