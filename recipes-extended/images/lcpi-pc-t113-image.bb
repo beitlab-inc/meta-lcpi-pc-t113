@@ -38,6 +38,7 @@ WIFI_TOOLS = " \
 "
 
 MISC_TOOLS += " \
+    beitlab-fetch \
     can-utils \
     libsocketcan \
     strace \

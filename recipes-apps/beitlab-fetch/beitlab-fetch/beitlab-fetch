@@ -1,0 +1,427 @@
+#!/bin/sh
+#
+# beitlab-fetch - one-screen system summary in the style of neofetch.
+#
+# neofetch itself is a ~2500-line bash script and fastfetch has no recipe on
+# dunfell, so this is a POSIX sh reimplementation sized for the T113: it reads
+# /proc and /sys directly and forks only for df, wc and the package query.
+#
+# The logo files use a two-symbol encoding - '1' is the bright half of the
+# Beitlab mark, '2' the navy half, space is transparent - so the same art can
+# be rendered in colour, in monochrome, or as plain ASCII.
+
+set -u
+
+# Both are overridable so the script can be exercised from a build tree.
+CONF=${BEITLAB_FETCH_CONF:-/etc/beitlab-fetch.conf}
+LOGO_DIR=${BEITLAB_FETCH_LOGO_DIR:-/usr/share/beitlab-fetch}
+
+BEITLAB_BOARD=""
+BEITLAB_PRODUCT=""
+BEITLAB_YOCTO=""
+BEITLAB_FETCH_COLOR=auto
+BEITLAB_FETCH_LOGO=auto
+BEITLAB_FETCH_ASCII=0
+BEITLAB_FETCH_PACKAGES=1
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+usage() {
+	cat <<'EOF'
+Usage: beitlab-fetch [options]
+
+  --large        force the 24-column logo
+  --small        force the 20-column logo
+  --no-logo      print the information block only
+  --ascii        draw the logo with '#' instead of block characters
+  --color        force ANSI colour even when stdout is not a terminal
+  --no-color     never emit ANSI colour
+  --no-packages  skip the installed-package count (the slowest field)
+  -h, --help     this message
+
+Defaults live in /etc/beitlab-fetch.conf.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+	case $1 in
+	--large) BEITLAB_FETCH_LOGO=large ;;
+	--small) BEITLAB_FETCH_LOGO=small ;;
+	--no-logo) BEITLAB_FETCH_LOGO=none ;;
+	--ascii) BEITLAB_FETCH_ASCII=1 ;;
+	--color) BEITLAB_FETCH_COLOR=always ;;
+	--no-color) BEITLAB_FETCH_COLOR=never ;;
+	--no-packages) BEITLAB_FETCH_PACKAGES=0 ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		echo "beitlab-fetch: unknown option '$1'" >&2
+		usage >&2
+		exit 2
+		;;
+	esac
+	shift
+done
+
+# --- presentation ------------------------------------------------------------
+
+term_cols=""
+if command -v stty >/dev/null 2>&1; then
+	term_cols=$(stty size 2>/dev/null | cut -d' ' -f2)
+fi
+case ${term_cols:-} in
+'' | *[!0-9]*) term_cols=${COLUMNS:-80} ;;
+esac
+case $term_cols in
+'' | *[!0-9]*) term_cols=80 ;;
+esac
+
+case $BEITLAB_FETCH_COLOR in
+always) use_color=1 ;;
+never) use_color=0 ;;
+*)
+	if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; then
+		use_color=1
+	else
+		use_color=0
+	fi
+	;;
+esac
+
+ESC=$(printf '\033')
+if [ "$use_color" = 1 ]; then
+	C_HI="${ESC}[94m"
+	C_LO="${ESC}[34m"
+	C_LBL="${ESC}[1;94m"
+	C_DIM="${ESC}[2m"
+	C_RST="${ESC}[0m"
+else
+	C_HI=""
+	C_LO=""
+	C_LBL=""
+	C_DIM=""
+	C_RST=""
+fi
+
+if [ "$BEITLAB_FETCH_ASCII" = 1 ]; then
+	CELL="#"
+else
+	CELL=$(printf '\342\226\210')
+fi
+
+logo_mode=$BEITLAB_FETCH_LOGO
+if [ "$logo_mode" = auto ]; then
+	if [ "$term_cols" -ge 70 ]; then
+		logo_mode=large
+	elif [ "$term_cols" -ge 64 ]; then
+		logo_mode=small
+	else
+		logo_mode=none
+	fi
+fi
+
+case $logo_mode in
+large)
+	logo_file=$LOGO_DIR/logo-large.txt
+	logo_width=24
+	;;
+small)
+	logo_file=$LOGO_DIR/logo-small.txt
+	logo_width=20
+	;;
+*)
+	logo_file=""
+	logo_width=0
+	;;
+esac
+[ -n "$logo_file" ] && [ -r "$logo_file" ] || {
+	logo_file=""
+	logo_width=0
+}
+
+# --- field collection --------------------------------------------------------
+
+# kB (as /proc and df -Pk report it) to MiB, or GiB with one decimal once the
+# number stops being readable. The T113 rootfs and RAM both land in MiB.
+human_kib() {
+	if [ "$1" -ge 1048576 ]; then
+		printf '%s.%s GiB' "$(($1 / 1048576))" "$((($1 % 1048576) * 10 / 1048576))"
+	else
+		printf '%s MiB' "$(($1 / 1024))"
+	fi
+}
+
+os_name=""
+if [ -r /etc/os-release ]; then
+	# shellcheck source=/dev/null
+	os_name=$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-${NAME:-}}")
+fi
+
+board=$BEITLAB_BOARD
+if [ -z "$board" ] && [ -r /proc/device-tree/model ]; then
+	board=$(tr -d '\000' </proc/device-tree/model 2>/dev/null)
+fi
+
+kernel=$(uname -r 2>/dev/null)
+arch=$(uname -m 2>/dev/null)
+host=$(hostname 2>/dev/null)
+user=${USER:-}
+[ -n "$user" ] || user=$(id -un 2>/dev/null)
+
+up_sec=0
+if [ -r /proc/uptime ]; then
+	read -r up_raw _ </proc/uptime
+	up_sec=${up_raw%.*}
+fi
+up_d=$((up_sec / 86400))
+up_h=$(((up_sec % 86400) / 3600))
+up_m=$(((up_sec % 3600) / 60))
+uptime_str=""
+[ "$up_d" -gt 0 ] && uptime_str="${up_d}d "
+[ "$up_d" -gt 0 ] || [ "$up_h" -gt 0 ] && uptime_str="${uptime_str}${up_h}h "
+uptime_str="${uptime_str}${up_m}m"
+
+cpu_model=""
+cpu_hw=""
+cpu_cores=0
+if [ -r /proc/cpuinfo ]; then
+	while IFS= read -r line; do
+		case $line in
+		processor*) cpu_cores=$((cpu_cores + 1)) ;;
+		"model name"*) [ -n "$cpu_model" ] || cpu_model=${line#*: } ;;
+		Hardware*) cpu_hw=${line#*: } ;;
+		esac
+	done </proc/cpuinfo
+fi
+# ARM kernels report "ARMv7 Processor rev 5 (v7l)"; the middle word is noise.
+cpu_model=$(echo "$cpu_model" | sed -e 's/ Processor//' -e 's/  */ /g')
+[ -n "$cpu_model" ] || cpu_model=$arch
+
+cpu_freq=""
+freq_file=/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
+if [ -r "$freq_file" ]; then
+	read -r khz <"$freq_file"
+	case $khz in
+	'' | *[!0-9]*) ;;
+	*) cpu_freq=" @ $((khz / 1000)) MHz" ;;
+	esac
+fi
+
+mem_total=0
+mem_avail=0
+swap_total=0
+swap_free=0
+if [ -r /proc/meminfo ]; then
+	while read -r key val _; do
+		case $key in
+		MemTotal:) mem_total=$val ;;
+		MemAvailable:) mem_avail=$val ;;
+		SwapTotal:) swap_total=$val ;;
+		SwapFree:) swap_free=$val ;;
+		esac
+	done </proc/meminfo
+fi
+mem_str=""
+if [ "$mem_total" -gt 0 ]; then
+	mem_used=$((mem_total - mem_avail))
+	mem_str="$(human_kib $mem_used) / $(human_kib $mem_total) ($((mem_used * 100 / mem_total))%)"
+fi
+swap_str=""
+if [ "$swap_total" -gt 0 ]; then
+	swap_str="$(human_kib $((swap_total - swap_free))) / $(human_kib $swap_total)"
+fi
+
+load_str=""
+[ -r /proc/loadavg ] && {
+	read -r l1 l5 l15 _ </proc/loadavg
+	load_str="$l1 $l5 $l15"
+}
+
+temp_str=""
+for tz in /sys/class/thermal/thermal_zone0/temp /sys/class/hwmon/hwmon0/temp1_input; do
+	[ -r "$tz" ] || continue
+	read -r milli <"$tz"
+	case $milli in
+	'' | *[!0-9]*) continue ;;
+	esac
+	temp_str="$((milli / 1000)).$(((milli % 1000) / 100)) C"
+	break
+done
+
+disk_str=$(df -Pk / 2>/dev/null | (
+	read -r _
+	read -r _ total used _ pct _ || exit 0
+	[ -n "${total:-}" ] || exit 0
+	printf '%s / %s (%s)' "$(human_kib "$used")" "$(human_kib "$total")" "$pct"
+))
+
+net_str=""
+if command -v ip >/dev/null 2>&1; then
+	net_str=$(ip -4 -o addr show scope global 2>/dev/null | (
+		while read -r _ ifn _ cidr _; do
+			printf '%s (%s)' "${cidr%%/*}" "$ifn"
+			break
+		done
+	))
+elif command -v ifconfig >/dev/null 2>&1; then
+	net_str=$(ifconfig 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p;s/.*inet \([0-9.]*\).*/\1/p' | grep -v '^127\.' | head -1)
+fi
+
+pkg_str=""
+if [ "$BEITLAB_FETCH_PACKAGES" = 1 ]; then
+	if command -v dpkg-query >/dev/null 2>&1; then
+		n=$(dpkg-query -f '.\n' -W 2>/dev/null | wc -l)
+		[ "${n:-0}" -gt 0 ] && pkg_str="$n (dpkg)"
+	elif command -v opkg >/dev/null 2>&1; then
+		n=$(opkg list-installed 2>/dev/null | wc -l)
+		[ "${n:-0}" -gt 0 ] && pkg_str="$n (opkg)"
+	elif command -v rpm >/dev/null 2>&1; then
+		n=$(rpm -qa 2>/dev/null | wc -l)
+		[ "${n:-0}" -gt 0 ] && pkg_str="$n (rpm)"
+	fi
+fi
+
+shell_str=""
+[ -n "${SHELL:-}" ] && shell_str=${SHELL##*/}
+
+tty_str=$(tty 2>/dev/null)
+case $tty_str in
+/dev/*) tty_str=${tty_str#/dev/} ;;
+*) tty_str="" ;;
+esac
+
+# --- assemble the information block ------------------------------------------
+
+INFO=""
+add() {
+	[ -n "${2:-}" ] || return 0
+	INFO="${INFO}${C_LBL}${1}${C_RST} ${2}
+"
+}
+addraw() {
+	INFO="${INFO}${1}
+"
+}
+
+title="${user}@${host}"
+rule=""
+n=${#title}
+while [ "$n" -gt 0 ]; do
+	rule="${rule}-"
+	n=$((n - 1))
+done
+addraw "${C_LBL}${title}${C_RST}"
+addraw "${C_DIM}${rule}${C_RST}"
+
+add "OS:" "$os_name"
+add "Product:" "$BEITLAB_PRODUCT"
+add "Board:" "$board"
+add "Kernel:" "${kernel}${arch:+ ($arch)}"
+add "Yocto:" "$BEITLAB_YOCTO"
+add "Uptime:" "$uptime_str"
+add "Packages:" "$pkg_str"
+add "Shell:" "$shell_str"
+add "Console:" "${tty_str}${tty_str:+ }${term_cols} cols"
+add "SoC:" "$cpu_hw"
+add "CPU:" "${cpu_model} (${cpu_cores})${cpu_freq}"
+add "Load:" "$load_str"
+add "Temp:" "$temp_str"
+add "Memory:" "$mem_str"
+add "Swap:" "$swap_str"
+add "Disk (/):" "$disk_str"
+add "Network:" "$net_str"
+
+if [ "$use_color" = 1 ]; then
+	addraw ""
+	pal=""
+	for c in 0 1 2 3 4 5 6 7; do
+		pal="${pal}${ESC}[4${c}m   "
+	done
+	addraw "${pal}${C_RST}"
+fi
+
+# --- render ------------------------------------------------------------------
+
+pad() {
+	_n=$1
+	while [ "$_n" -gt 0 ]; do
+		printf ' '
+		_n=$((_n - 1))
+	done
+}
+
+# Emit one encoded logo line as coloured cells. Done character by character in
+# the shell rather than through sed so the whole banner costs no extra forks.
+# The escape is only written when the colour actually changes, which keeps the
+# line short enough to survive a 115200 baud console without visible redraw.
+draw_logo_line() {
+	_line=$1
+	_out=""
+	# Every line is terminated with a reset, so the terminal already starts
+	# each row in the default colour.
+	_cur=$C_RST
+	while [ -n "$_line" ]; do
+		_rest=${_line#?}
+		_ch=${_line%"$_rest"}
+		_line=$_rest
+		case $_ch in
+		1)
+			_want=$C_HI
+			_glyph=$CELL
+			;;
+		2)
+			_want=$C_LO
+			_glyph=$CELL
+			;;
+		*)
+			_want=$C_RST
+			_glyph=" "
+			;;
+		esac
+		if [ "$_want" != "$_cur" ]; then
+			_out="${_out}${_want}"
+			_cur=$_want
+		fi
+		_out="${_out}${_glyph}"
+	done
+	# Rows past the bottom of the mark contribute nothing.
+	[ -n "$_out" ] || return 0
+	printf '%s%s' "$_out" "$C_RST"
+}
+
+if [ -z "$logo_file" ]; then
+	printf '%s' "$INFO"
+	exit 0
+fi
+
+printf '\n'
+printf '%s' "$INFO" | {
+	exec 3<"$logo_file"
+	logo_eof=0
+	info_eof=0
+	while [ "$logo_eof" = 0 ] || [ "$info_eof" = 0 ]; do
+		lraw=""
+		iline=""
+		if [ "$logo_eof" = 0 ]; then
+			IFS= read -r lraw <&3 || {
+				logo_eof=1
+				lraw=""
+			}
+		fi
+		if [ "$info_eof" = 0 ]; then
+			IFS= read -r iline || {
+				info_eof=1
+				iline=""
+			}
+		fi
+		[ "$logo_eof" = 1 ] && [ "$info_eof" = 1 ] && break
+		draw_logo_line "$lraw"
+		pad $((logo_width - ${#lraw} + 3))
+		printf '%s\n' "$iline"
+	done
+	exec 3<&-
+}
+printf '\n'
