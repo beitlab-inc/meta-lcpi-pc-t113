@@ -1,6 +1,7 @@
 SUMMARY = "UART-controlled framebuffer Pong for the LCPI-PC-T113 LCD"
-DESCRIPTION = "A tiny dependency-free Pong that draws directly to /dev/fb0, puts \
-the LCD virtual terminal into graphics mode, and takes its controls from a UART. \
+DESCRIPTION = "A tiny Pong that draws directly to /dev/fb0, puts \
+the LCD virtual terminal into graphics mode, and takes its controls from a \
+USB keyboard. The serial console on PB6/PB7 stays at the login prompt. \
 Suitable for the T113-S3 (128MB RAM, 2D-only, no X11/Wayland)."
 HOMEPAGE = "https://example.invalid/lcpi-av"
 LICENSE = "MIT"
@@ -19,9 +20,11 @@ RDEPENDS_${PN} = "alsa-utils"
 inherit systemd
 
 SYSTEMD_SERVICE_${PN} = "pingpong.service"
-# Boot straight into the game (kiosk). Set to "disable" to keep the console login
-# and start it on demand with: systemctl start pingpong
-SYSTEMD_AUTO_ENABLE = "enable"
+# Do not autostart: launch on demand with `game start pingpong` (or
+# `systemctl start pingpong`). Set to "enable" to boot straight into the game.
+SYSTEMD_AUTO_ENABLE = "disable"
+
+RDEPENDS_${PN} += "lcpi-play"
 
 do_compile() {
     ${CC} ${CFLAGS} ${LDFLAGS} -O2 -Wall -o pingpong ${S}/pingpong.c -lasound -lm

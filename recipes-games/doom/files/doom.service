@@ -1,5 +1,5 @@
 [Unit]
-Description=Pong on the LCD (USB keyboard)
+Description=Doom on the LCD (framebuffer, Freedoom)
 # Own the LCD VT only. Never Conflict with serial-getty@ttyS0: that unit's
 # TTYVHangup=yes would hang up PB6/PB7 (UART3 / ttyS0) and freeze the shell.
 Conflicts=getty@tty1.service
@@ -11,8 +11,6 @@ After=boot-chime.service
 
 [Service]
 Type=simple
-# Pin stdio off the serial console. If stdin were a TTY, pingpong would
-# cfmakeraw() it and PB6/PB7 would go silent until the game exits.
 StandardInput=null
 StandardOutput=journal
 StandardError=journal
@@ -23,7 +21,9 @@ ExecStartPre=-/bin/sleep 1
 ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' on
 ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' 100%
 ExecStartPre=-/usr/bin/amixer -q sset 'DAC' 100%
-ExecStart=/usr/bin/game --run pingpong /usr/bin/pingpong -f /dev/fb0 -t /dev/tty1
+Environment=DOOMWADDIR=/usr/share/games/doom
+WorkingDirectory=/usr/share/games/doom
+ExecStart=/usr/bin/game --run doom /usr/bin/doomgeneric -iwad /usr/share/games/doom/freedoom1.wad
 ExecStopPost=-/usr/bin/game --restore-console
 Restart=no
 

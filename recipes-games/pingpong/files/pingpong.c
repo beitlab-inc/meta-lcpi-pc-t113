@@ -4,7 +4,10 @@
 //
 // It renders to the Linux framebuffer (/dev/fb0), puts the LCD's virtual
 // terminal into KD_GRAPHICS mode so the text console stops painting over it, and
-// takes its control keys from a serial port (UART). No X11/Wayland/GPU needed -
+// takes its control keys from `game ctl` (/run/lcpi-game.input) and from a
+// USB keyboard (evdev) if one is plugged in. An extra byte device can be
+// passed with -i, but never /dev/ttyS0 / /dev/console — that is the
+// PB6/PB7 debug UART and cfmakeraw() there freezes the login shell.
 // perfect for the T113-S3 (128MB RAM, 2D-only).
 //
 // Rendering notes (why the animation is smooth):
@@ -17,7 +20,7 @@
 //   * The screen is cleared with a single memcpy of a pre-rendered background
 //     (with the net baked in), and frames are paced to ~60 FPS.
 //
-// Controls (bytes read from the input device, default /dev/stdin):
+// Controls (USB keyboard evdev, plus optional -i byte device):
 //   Left paddle : 'w' / 's'      (or Up / Down arrow keys)
 //   Right paddle: 'i' / 'k'      (or 'o' / 'l')  -- using these disables the AI
 //   Serve ball  : space          (also starts a new match after WIN/LOSE)
@@ -32,7 +35,7 @@
 // opened the game just runs silently.
 //
 // Usage: pingpong [-i <input-dev>] [-f <fb-dev>] [-t <tty-dev>]
-//   defaults: -i /dev/stdin  -f /dev/fb0  -t /dev/tty1
+//   defaults: no -i (USB keyboard only)  -f /dev/fb0  -t /dev/tty1
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -48,7 +51,10 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <dirent.h>
+#include <poll.h>
 #include <linux/fb.h>
+#include <linux/input.h>
 #include <linux/kd.h>
 #include <alsa/asoundlib.h>
 
@@ -57,9 +63,11 @@
 #endif
 
 #define WIN_SCORE 5                        /* first side to reach this wins the match */
+#define GAME_INPUT "/run/lcpi-game.input"
 
 /* ---------------- globals for clean teardown ---------------- */
-static int   fb_fd = -1, tty_fd = -1, in_fd = -1;
+static int   fb_fd = -1, tty_fd = -1, in_fd = -1, ctl_fd = -1;
+static int   kbd_fds[8], n_kbd;
 static unsigned char *fbp = MAP_FAILED;   /* the mmap'd framebuffer          */
 static unsigned char *back = NULL;         /* single-buffer scratch (malloc)  */
 static unsigned char *bg_template = NULL;  /* pre-rendered background + net    */
@@ -88,6 +96,12 @@ static void cleanup(void)
         if (in_fd != STDIN_FILENO) close(in_fd);
         in_fd = -1;
     }
+    if (ctl_fd >= 0) { close(ctl_fd); ctl_fd = -1; }
+    for (int i = 0; i < n_kbd; i++) {
+        ioctl(kbd_fds[i], EVIOCGRAB, 0);
+        close(kbd_fds[i]);
+    }
+    n_kbd = 0;
     if (fb_fd >= 0) { close(fb_fd); fb_fd = -1; }
     snd_close();
 }
@@ -311,6 +325,58 @@ static void snd_close(void)
     if (sfx) { free(sfx); sfx = NULL; }
 }
 
+#define TEST_KEY(k) (keybits[(k)/8] & (1 << ((k)%8)))
+static int is_keyboard(const char *path)
+{
+    unsigned long evbits = 0;
+    unsigned char keybits[KEY_MAX/8 + 1];
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    int ok = 0;
+    if (fd < 0) return 0;
+    if (ioctl(fd, EVIOCGBIT(0, sizeof evbits), &evbits) < 0) goto out;
+    if (!(evbits & (1ul << EV_KEY))) goto out;
+    memset(keybits, 0, sizeof keybits);
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keybits), keybits) < 0) goto out;
+    if (TEST_KEY(KEY_A) && TEST_KEY(KEY_ENTER)) ok = 1;
+out:
+    close(fd);
+    return ok;
+}
+
+static void scan_keyboards(void)
+{
+    DIR *dir = opendir("/dev/input");
+    struct dirent *dp;
+    if (!dir) return;
+    while ((dp = readdir(dir)) && n_kbd < (int)(sizeof kbd_fds / sizeof kbd_fds[0])) {
+        char path[280];
+        int fd;
+        if (strncmp(dp->d_name, "event", 5) != 0) continue;
+        snprintf(path, sizeof path, "/dev/input/%s", dp->d_name);
+        if (!is_keyboard(path)) continue;
+        fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) continue;
+        ioctl(fd, EVIOCGRAB, 1);
+        kbd_fds[n_kbd++] = fd;
+        fprintf(stderr, "pingpong: keyboard %s\n", path);
+    }
+    closedir(dir);
+}
+
+static unsigned char evdev_to_char(unsigned int code)
+{
+    switch (code) {
+    case KEY_W: case KEY_UP:    return 'w';
+    case KEY_S: case KEY_DOWN:  return 's';
+    case KEY_I: case KEY_O:     return 'i';
+    case KEY_K: case KEY_L:     return 'k';
+    case KEY_SPACE:             return ' ';
+    case KEY_Q:                 return 'q';
+    case KEY_ENTER:             return ' ';
+    default:                    return 0;
+    }
+}
+
 /* Point the draw canvas at this frame's target buffer. */
 static void begin_frame(void)
 {
@@ -347,7 +413,7 @@ static long now_ns(void)
 /* ---------------- main ---------------- */
 int main(int argc, char **argv)
 {
-    const char *in_path = "/dev/stdin";
+    const char *in_path = NULL;           /* USB keyboard only; never stdin/UART */
     const char *fb_path = "/dev/fb0";
     const char *tty_path = "/dev/tty1";
 
@@ -422,25 +488,33 @@ int main(int argc, char **argv)
     fill_solid(fbp, mapsize / finfo.line_length, C_BG);
 
     /* --- put the LCD's VT into graphics mode (stop fbcon painting) --- */
-    tty_fd = open(tty_path, O_RDWR);
+    tty_fd = open(tty_path, O_RDWR | O_NOCTTY);
     if (tty_fd >= 0) {
         if (ioctl(tty_fd, KDSETMODE, KD_GRAPHICS) == 0) restore_tty_mode = 1;
     }
 
-    /* --- input (UART or stdin), raw & non-blocking --- */
-    in_fd = strcmp(in_path, "/dev/stdin") ? open(in_path, O_RDWR | O_NONBLOCK)
-                                          : STDIN_FILENO;
-    if (in_fd < 0) { perror(in_path); return 1; }
-    if (in_fd == STDIN_FILENO) fcntl(in_fd, F_SETFL, O_NONBLOCK);
-    if (isatty(in_fd)) {
-        in_is_tty = 1;
-        tcgetattr(in_fd, &in_saved);
-        struct termios raw = in_saved;
-        cfmakeraw(&raw);
-        raw.c_cc[VMIN] = 0;
-        raw.c_cc[VTIME] = 0;
-        tcsetattr(in_fd, TCSANOW, &raw);
+    /* --- input: USB keyboards always. Optional -i byte device, but never
+     * the serial console (PB6/PB7 = /dev/ttyS0). cfmakeraw() there freezes
+     * the login shell until the game exits. --- */
+    if (in_path && strcmp(in_path, "/dev/stdin") &&
+        strcmp(in_path, "/dev/ttyS0") && strcmp(in_path, "/dev/console") &&
+        strcmp(in_path, "/dev/tty")) {
+        in_fd = open(in_path, O_RDWR | O_NONBLOCK | O_NOCTTY);
+        if (in_fd < 0) { perror(in_path); return 1; }
+        if (isatty(in_fd)) {
+            in_is_tty = 1;
+            tcgetattr(in_fd, &in_saved);
+            struct termios raw = in_saved;
+            cfmakeraw(&raw);
+            raw.c_cc[VMIN] = 0;
+            raw.c_cc[VTIME] = 0;
+            tcsetattr(in_fd, TCSANOW, &raw);
+        }
+    } else {
+        in_fd = -1; /* keys come from game ctl + evdev */
     }
+    ctl_fd = open(GAME_INPUT, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    scan_keyboards();
 
     /* --- audio: open the ALSA "default" device (silently skipped if absent) --- */
     snd_init();
@@ -468,7 +542,12 @@ int main(int argc, char **argv)
     while (running) {
         /* ---- input ---- */
         unsigned char buf[64];
-        ssize_t n = read(in_fd, buf, sizeof buf);
+        ssize_t n = (in_fd >= 0) ? read(in_fd, buf, sizeof buf) : 0;
+        if (n < 0) n = 0;
+        if (ctl_fd >= 0 && n < (ssize_t)sizeof buf) {
+            ssize_t m = read(ctl_fd, buf + n, sizeof buf - (size_t)n);
+            if (m > 0) n += m;
+        }
         for (ssize_t i = 0; i < n; i++) {
             unsigned char c = buf[i];
             if (c == 27 && i + 2 < n && buf[i + 1] == '[') { /* arrow keys */
@@ -494,6 +573,30 @@ int main(int argc, char **argv)
                 break;
             case 'q': case 'Q': case 3: running = 0; break;
             default: break;
+            }
+        }
+        for (int k = 0; k < n_kbd; k++) {
+            struct input_event ev;
+            while (read(kbd_fds[k], &ev, sizeof ev) == (ssize_t)sizeof ev) {
+                unsigned char c;
+                if (ev.type != EV_KEY || ev.value != 1) continue;
+                if (ev.code == KEY_LEFTCTRL || ev.code == KEY_RIGHTCTRL) continue;
+                c = evdev_to_char(ev.code);
+                if (c == 'w') { l_dir = -1; l_hold = HOLD; }
+                else if (c == 's') { l_dir = 1; l_hold = HOLD; }
+                else if (c == 'i') { r_dir = -1; r_hold = HOLD; ai = 0; }
+                else if (c == 'k') { r_dir = 1; r_hold = HOLD; ai = 0; }
+                else if (c == 'q') running = 0;
+                else if (c == ' ') {
+                    if (game_over) {
+                        sl = sr = 0; game_over = 0; serve = 1;
+                        bx = W / 2.0f; by = H / 2.0f;
+                    } else if (serve) {
+                        bvx = serve_dir * (W / 130.0f);
+                        bvy = ((rand() % 2) ? 1 : -1) * (H / 240.0f);
+                        serve = 0;
+                    }
+                }
             }
         }
 

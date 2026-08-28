@@ -1,0 +1,184 @@
+#!/bin/sh
+# Start / stop LCPI framebuffer games from a login shell (SSH or serial).
+# Games run in the background via systemd. Only one game may be active:
+# `game --run` holds /run/lcpi-game.lock for the lifetime of the binary.
+set -eu
+
+GAMES="pingpong doom"
+LOCK=/run/lcpi-game.lock
+NAMEFILE=/run/lcpi-game.name
+INPUT=/run/lcpi-game.input
+
+usage() {
+    cat <<EOF
+Usage:
+  game start <name>   start a game in the background (fails if one is running)
+  game ctl            attach THIS terminal to send keys (no USB keyboard)
+  game stop           stop the running game (and restore the consoles)
+  game status         show which game is running, if any
+  game list           list known games
+
+Known games: $GAMES
+
+Examples:
+  game start doom
+  game ctl            # type here; look at the LCD. Ctrl-] detaches.
+  game stop
+EOF
+}
+
+is_busy() {
+    case "$(systemctl is-active "$1.service" 2>/dev/null || true)" in
+        active|activating|reloading) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+running_game() {
+    for g in $GAMES; do
+        if is_busy "$g"; then
+            echo "$g"
+            return 0
+        fi
+    done
+    return 1
+}
+
+valid_game() {
+    for g in $GAMES; do
+        [ "$g" = "$1" ] && return 0
+    done
+    return 1
+}
+
+# Put the LCD VT back in text mode and bring the LCD getty back.
+# Do NOT touch /dev/ttyS0: `stty` or restarting serial-getty (TTYVHangup=yes)
+# hangs up PB6/PB7 and freezes the login that started the game.
+cmd_restore() {
+    /usr/bin/lcpi-restore-console 2>/dev/null || true
+    stty sane < /dev/tty1 2>/dev/null || true
+    systemctl start --no-block getty@tty1.service 2>/dev/null || true
+    rm -f "$NAMEFILE" "$INPUT"
+}
+
+# Held by systemd ExecStart: flock the mutex then exec the real binary.
+# A second game fails here even if started with raw `systemctl start`.
+cmd_run() {
+    name="${1:-}"
+    shift
+    if [ -z "$name" ] || [ "$#" -lt 1 ]; then
+        echo "game --run: usage: game --run <name> <cmd> [args...]" >&2
+        exit 2
+    fi
+    mkdir -p /run
+    exec 9>"$LOCK"
+    if ! flock -n 9; then
+        echo "A game is already running: $(cat "$NAMEFILE" 2>/dev/null || echo unknown)" >&2
+        exit 1
+    fi
+    echo "$name" >"$NAMEFILE"
+    rm -f "$INPUT"
+    mkfifo -m 666 "$INPUT"
+    exec "$@"
+}
+
+# Put this SSH/serial tty into raw mode and copy keys into the FIFO.
+# Never opens /dev/ttyS0 itself — stdin of THIS process is the control path.
+cmd_ctl() {
+    cur="$(running_game || true)"
+    if [ -z "$cur" ]; then
+        echo "No game is running. Start one first: game start doom" >&2
+        exit 1
+    fi
+    exec /usr/bin/lcpi-game-ctl
+}
+
+cmd_start() {
+    name="${1:-}"
+    if [ -z "$name" ]; then
+        echo "game start: missing name. Try: game list" >&2
+        exit 2
+    fi
+    if ! valid_game "$name"; then
+        echo "Unknown game '$name'. Known: $GAMES" >&2
+        exit 2
+    fi
+    if ! systemctl cat "${name}.service" >/dev/null 2>&1; then
+        echo "No systemd unit ${name}.service (is the package installed?)" >&2
+        exit 1
+    fi
+    cur="$(running_game || true)"
+    if [ -n "$cur" ]; then
+        echo "A game is already running: $cur" >&2
+        echo "Stop it first: game stop" >&2
+        exit 1
+    fi
+    systemctl start --no-block "${name}.service"
+    echo "$name started on the LCD in the background."
+    echo "Play from this terminal (no USB keyboard):  game ctl"
+    echo "Detach with Ctrl-]. Stop the game with:     game stop"
+}
+
+cmd_stop() {
+    cur="$(running_game || true)"
+    if [ -z "$cur" ]; then
+        echo "No game is running."
+        cmd_restore
+        exit 0
+    fi
+    for g in $GAMES; do
+        systemctl stop "${g}.service" 2>/dev/null || true
+    done
+    cmd_restore
+    echo "Stopped $cur. Consoles restored."
+}
+
+cmd_status() {
+    cur="$(running_game || true)"
+    if [ -n "$cur" ]; then
+        echo "running: $cur"
+        systemctl --no-pager --full status "${cur}.service" || true
+    else
+        echo "running: (none)"
+    fi
+}
+
+cmd="${1:-}"
+arg="${2:-}"
+
+case "$cmd" in
+    --run)
+        shift
+        cmd_run "$@"
+        ;;
+    --restore-console)
+        cmd_restore
+        ;;
+    start)
+        cmd_start "$arg"
+        ;;
+    ctl|attach)
+        cmd_ctl
+        ;;
+    stop)
+        cmd_stop
+        ;;
+    status)
+        cmd_status
+        ;;
+    list)
+        echo "$GAMES"
+        ;;
+    -h|--help|help|"")
+        usage
+        [ -n "$cmd" ] || exit 2
+        ;;
+    pingpong|doom)
+        cmd_start "$cmd"
+        ;;
+    *)
+        echo "Unknown command '$cmd'." >&2
+        usage >&2
+        exit 2
+        ;;
+esac

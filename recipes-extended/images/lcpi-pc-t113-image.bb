@@ -22,7 +22,7 @@ IMAGE_INSTALL = "\
 inherit core-image
 
 IMAGE_OVERHEAD_FACTOR ?= "1.0" 
-IMAGE_ROOTFS_SIZE ?= "204800"
+IMAGE_ROOTFS_SIZE ?= "229376"
 
 FB_TOOLS = " \
     fb-test \
@@ -58,8 +58,9 @@ MISC_TOOLS += " \
 # The T113-S3 has no 3D GPU (only the 2D G2D + display engine), so the graphics
 # story is deliberately 2D: framebuffer console, KMS/DRM, GStreamer to the LCD
 # (fbdevsink / kmssink), audio out the analog codec. No X11/Wayland/GLES stack
-# (too heavy for 128MB and unaccelerated). "pingpong" is a tiny UART-controlled
-# framebuffer game that boots on the LCD (see recipes-games/pingpong).
+# (too heavy for 128MB and unaccelerated). Framebuffer games (pingpong, doom)
+# are launched on demand from a login shell with `game start <name>` — they do
+# not autostart at boot.
 AV_TOOLS = " \
     alsa-utils \
     alsa-tools \
@@ -80,6 +81,8 @@ AV_TOOLS = " \
     evtest \
     zram \
     pingpong \
+    doom \
+    lcpi-play \
     psplash \
     psplash-default \
     boot-chime \
@@ -116,12 +119,16 @@ mask_lsb_zram() {
     ln -sf /dev/null ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/zram.service
 }
 
-# NOTE: the LCD no longer shows a login prompt - it boots into the "pingpong"
-# framebuffer game (pingpong.service Conflicts= getty@tty1 + serial-getty@ttyS0,
-# grabs /dev/tty1 in KD_GRAPHICS and reads controls from /dev/ttyS0). To get a
-# console back: SSH in and "systemctl stop pingpong", then
-# "systemctl start serial-getty@ttyS0". To prefer a login prompt on the LCD
-# instead, set SYSTEMD_AUTO_ENABLE="disable" in recipes-games/pingpong.
+# LCD and serial consoles stay at the login prompt after boot. Framebuffer
+# games are started from a shell (SSH or UART) in the background:
+#   game start pingpong
+#   game start doom
+#   game ctl            # this terminal is the keyboard (Ctrl-] detaches)
+#   game stop
+# Only one game may run at a time; a second `game start` is refused until
+# `game stop`. Games Conflicts= getty@tty1 only (LCD). They must NOT stop
+# serial-getty@ttyS0 — that is the PB6/PB7 debug UART. Play with `game ctl`
+# from SSH/serial, or a USB keyboard on the USB-A host port.
 
 ROOTFS_POSTPROCESS_COMMAND += "set_8189fs_loglevel; mask_nfsd_mount; mask_lsb_zram;"
 IMAGE_ROOTFS_EXTRA_SPACE_append = "${@bb.utils.contains("DISTRO_FEATURES", "systemd", " + 4096", "" ,d)}"

@@ -126,4 +126,33 @@ do_configure_prepend() {
 };
 EOF
     fi
+
+    # Move the Linux debug console off UART0/PE2/PE3 (those pins are the
+    # camera DVP PCLK/MCLK on P3) onto UART3 TX/RX on PB6/PB7 (P2 header).
+    # UART0 cannot mux onto PB6/PB7 on the T113; UART3 is the controller that
+    # does. Alias it as serial0 so userspace still sees /dev/ttyS0.
+    if ! grep -q "LCPI UART3 console on PB6/PB7" "${dts}"; then
+        sed -i 's/serial0 = \&uart0;/serial0 = \&uart3;/' "${dts}"
+        sed -i 's/earlyprintk=sunxi-uart,0x2500000/earlyprintk=sunxi-uart,0x2500c00/' "${dts}"
+        cat >> "${dts}" <<'EOF'
+
+/* --- LCPI UART3 console on PB6/PB7 (was UART0 on PE2/PE3) --- */
+&pio {
+	uart3_pb6_pins: uart3-pb6-pins {
+		pins = "PB6", "PB7";
+		function = "uart3";
+	};
+};
+
+&uart0 {
+	status = "disabled";
+};
+
+&uart3 {
+	pinctrl-0 = <&uart3_pb6_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+EOF
+    fi
 }

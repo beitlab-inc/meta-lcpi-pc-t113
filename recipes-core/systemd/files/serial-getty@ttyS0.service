@@ -12,11 +12,14 @@ Type=idle
 Restart=always
 UtmpIdentifier=%I
 TTYPath=/dev/%I
-TTYReset=yes
-TTYVHangup=yes
+# Do not hang up PB6/PB7 when a game stops the LCD getty (or mistakenly
+# Conflicts with this unit). TTYVHangup=yes SIGHUPs the login shell and
+# the UART looks "blocked" until reboot.
+TTYReset=no
+TTYVHangup=no
 KillMode=process
 IgnoreSIGPIPE=no
-SendSIGHUP=yes
+SendSIGHUP=no
 
 [Install]
 WantedBy=getty.target
