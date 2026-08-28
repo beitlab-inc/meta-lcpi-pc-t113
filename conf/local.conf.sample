@@ -85,7 +85,13 @@ SSTATE_DIR ?= "${TOPDIR}/../sstate-cache"
 # Ultimately when creating custom policy, people will likely end up subclassing 
 # these defaults.
 #
-DISTRO ?= "poky"
+DISTRO ?= "beitlabos"
+# "beitlabos" is this layer's corporate distro (conf/distro/beitlabos.conf): the
+# Poky reference policy with Beitlab branding for the login banner, MOTD,
+# /etc/os-release and SDK paths. Bump the internal build number per release:
+#BEITLAB_VERSION = "1.0.0"
+#BEITLAB_BUILD = "0001"
+# Use DISTRO ?= "poky" instead for a plain upstream-branded build.
 # As an example of a subclass there is a "bleeding" edge policy configuration
 # where many versions are set to the absolute latest code from the upstream 
 # source control systems. This is just mentioned here as an example, its not

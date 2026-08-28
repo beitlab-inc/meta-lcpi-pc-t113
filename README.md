@@ -22,11 +22,12 @@ This layer boots the board with a mainline **Linux 6.5.5** kernel and the
 2. [Repository layout](#repository-layout)
 3. [Quick start (upstream / clean host)](#quick-start-upstream--clean-host)
 4. [Required build config (local.conf)](#required-build-config-localconf)
-5. [Display, audio & the LCD game](#display-audio--the-lcd-game)
-6. [Flashing](#flashing)
-7. [How this layer is put together](#how-this-layer-is-put-together)
-8. [Building on a modern / restricted host](#building-on-a-modern--restricted-host)
-9. [Credits](#credits)
+5. [BeitlabOS branding](#beitlabos-branding)
+6. [Display, audio & the LCD game](#display-audio--the-lcd-game)
+7. [Flashing](#flashing)
+8. [How this layer is put together](#how-this-layer-is-put-together)
+9. [Building on a modern / restricted host](#building-on-a-modern--restricted-host)
+10. [Credits](#credits)
 
 ---
 
@@ -42,6 +43,7 @@ This layer boots the board with a mainline **Linux 6.5.5** kernel and the
 | Internal analog audio      |   ✅¹  | backported self-contained `sun20i-codec` |
 | GStreamer media (2D)       |   ✅   | `fbdevsink` / `kmssink`, no GL |
 | Branded boot splash        |   ✅   | `psplash` logo + rotating spinner on black (no penguin) |
+| BeitlabOS identity         |   ✅   | `beitlabos` distro: login banner, MOTD, `/etc/os-release` |
 | UART-controlled LCD game   |   ✅   | `pingpong` boots on the panel |
 
 ¹ The codec driver is built in and powers its own on-die analog LDOs, so the card
@@ -58,6 +60,7 @@ needed. See [Audio](#display-audio--the-lcd-game).
 meta-lcpi-pc-t113/
 ├── conf/
 │   ├── layer.conf                         # layer metadata (priority 5)
+│   ├── distro/beitlabos.conf              # DISTRO definition (corporate identity)
 │   ├── machine/lcpi-pc-t113.conf          # MACHINE definition (T113-S3, sun8i)
 │   ├── local.conf.sample                  # template local.conf
 │   └── bblayers.conf.sample               # template bblayers.conf
@@ -77,6 +80,8 @@ meta-lcpi-pc-t113/
 │   └── rtl8189/                           # out-of-tree WiFi driver
 ├── recipes-connectivity/wpa-supplicant/   # WiFi supplicant config
 ├── recipes-core/                          # systemd getty, networking, initramfs
+│   ├── base-files/                        # login banner (/etc/issue) + MOTD
+│   ├── os-release/                        # branded /etc/os-release fields
 │   ├── psplash/                           # boot-splash bbappend + company-logo.png
 │   ├── usbgadget/                         # OTG CDC-ECM USB-Ethernet gadget (PC/Mac)
 │   └── systemd/systemd-conf/              # wlan0.network + usb0.network
@@ -162,6 +167,96 @@ boots into the game, so SSH is your shell — see below):
 ```
 EXTRA_IMAGE_FEATURES += "debug-tweaks ssh-server-dropbear"
 ```
+
+Finally, pick the distro. The layer ships **`beitlabos`** (see below); `poky`
+still works if you want an unbranded upstream build:
+
+```
+DISTRO ?= "beitlabos"
+```
+
+---
+
+## BeitlabOS branding
+
+Out of the box a Poky build introduces itself on the UART as
+
+```
+Poky (Yocto Project Reference Distro) 3.1.33 lcpi-pc-t113 ttyS0
+```
+
+`beitlabos` replaces that with a product identity, without changing a single
+build policy:
+
+```
+BeitlabOS 1.0.0-0001  -  Beitlab Embedded Platform      <- bright green + bold
+Board: LCPI-PC-T113 (Allwinner T113-S3)
+Console: ttyS0   Kernel: 6.5.5   Yocto base: dunfell 3.1.33
+
+beitlab-t113 login:
+```
+
+Four pieces make this work:
+
+1. **`conf/distro/beitlabos.conf`** — `require`s `conf/distro/poky.conf` and then
+   overrides only the identity variables (`DISTRO`, `DISTRO_NAME`,
+   `DISTRO_VERSION`, `MAINTAINER`, `SDK_VENDOR`). The Yocto release it is built
+   on is captured with `:=` **before** the override, so the banner can still
+   report it honestly. `DISTRO_FEATURES`, the QA rules and the security flags
+   are inherited untouched, which is why switching distro rebuilds only a
+   handful of recipes instead of the whole tree.
+2. **`recipes-core/base-files/base-files_%.bbappend`** — replaces upstream's
+   `do_install_basefilesissue` (the one-liner generator) with the multi-line
+   banner above, writes a network banner to `/etc/issue.net`, and installs a
+   matching `/etc/motd` shown after login on serial, LCD and SSH. `\l` and `\r`
+   are expanded by `agetty` at print time, so the same file names the actual
+   terminal (`ttyS0` on the debug UART, `tty1` on the panel) and kernel. It also
+   sets the hostname, which is what `agetty` prints as the `beitlab-t113 login:`
+   prompt.
+3. **`recipes-core/os-release/os-release.bbappend`** — the machine-readable
+   half. `/etc/os-release` becomes `ID=beitlabos`, `NAME="BeitlabOS"`,
+   `PRETTY_NAME`, `VARIANT`, and a `BUILD_ID` pinned to the internal build
+   number (upstream defaults it to the build timestamp, which is useless for
+   tracing a board back to a release).
+4. **`recipes-core/usbgadget/`** — the identity a host sees over the OTG cable.
+   The USB string descriptors are stamped from the same variables at build time,
+   so the gadget reports manufacturer `BEITLAB`, the board as its product, and a
+   serial carrying the running release (`BEITLAB-1.0.0-0001`). Because a release
+   is not unique per unit — and USB hosts key persistent interface names off the
+   serial — the script appends the SoC's factory-programmed 128-bit SID at boot
+   (`CONFIG_NVMEM_SUNXI_SID`), so two boards on the same host stay distinct.
+
+**Colour.** The banner and MOTD are authored once with `\e` markers and rendered
+per file: `agetty` turns `\e` into ESC itself for `/etc/issue`, while `/etc/motd`
+is only `cat`'d by `login` and so gets real ESC bytes written at build time. Set
+`BEITLAB_BANNER_COLOR = "0"` to strip the escapes and get plain ASCII on both.
+`/etc/issue.net` is always plain — it is handed to network logins, whose
+consumer may not be a terminal at all.
+
+**Version scheme.** `BEITLAB_VERSION` is the product version and `BEITLAB_BUILD`
+the internal build number; together they form `DISTRO_VERSION`
+(`1.0.0-0001`). Bump `BEITLAB_BUILD` for every image that leaves the lab —
+from CI, without editing the layer:
+
+```bash
+BEITLAB_BUILD="0042" bitbake lcpi-pc-t113-image      # with BB_ENV_EXTRAWHITE
+# or simply put BEITLAB_BUILD = "0042" in local.conf
+```
+
+**Customising.** The knobs all live at the top of `conf/distro/beitlabos.conf`:
+`BEITLAB_PRODUCT`, `BEITLAB_VENDOR`, and `BEITLAB_URL` / `BEITLAB_SUPPORT`
+(empty by default — set them to the real corporate URL and support mailbox and
+they appear in the MOTD and in `/etc/os-release`). `BEITLAB_BOARD` and
+`BEITLAB_HOSTNAME` live in `conf/machine/lcpi-pc-t113.conf`, so a second board
+gets its own banner line and hostname for free.
+
+> **`TARGET_VENDOR` stays `-poky`.** It is baked into the cross-toolchain triplet
+> (`arm-poky-linux-gnueabi`) and appears only in build-internal paths, but
+> changing it invalidates every sstate object and forces a full rebuild. The
+> line is in the distro conf, commented out, if the triplet must be branded too.
+
+The other half of the corporate presence is the boot splash — see the branded
+`psplash` logo in [Display, audio & the LCD game](#display-audio--the-lcd-game).
 
 ---
 
@@ -333,6 +428,9 @@ USB-Ethernet gadget on the OTG port at boot (systemd `usb-gadget.service` →
 `usb-gadget-ecm.sh`, via configfs). `systemd-conf/usb0.network` gives the board
 `192.168.20.2/24` **and runs a small DHCP server**, so the host auto-configures.
 CDC-ECM is native on Linux and **macOS** (Windows needs an ECM/RNDIS driver).
+The gadget introduces itself with the same identity as the login banner —
+manufacturer `BEITLAB`, the board as product, and a serial of
+`BEITLAB-<release>-<SoC ID>` (see [BeitlabOS branding](#beitlabos-branding)).
 
 Plug OTG USB-C into the PC/Mac, then:
 
@@ -377,6 +475,9 @@ You can also flash over USB (FEL mode) with the bundled **xfel** tool.
 
 ## How this layer is put together
 
+- **`conf/distro/beitlabos.conf`** — the corporate distro: Poky's policy with
+  Beitlab's identity (banner, MOTD, `os-release`, SDK paths). See
+  [BeitlabOS branding](#beitlabos-branding).
 - **`conf/machine/lcpi-pc-t113.conf`** — defines the machine: `SOC_FAMILY=sun8i`,
   Cortex-A7 tune, `virtual/kernel = linux-mainline`, `virtual/bootloader =
   awboot`, `KERNEL_IMAGETYPE = zImage`, device tree
@@ -407,6 +508,11 @@ You can also flash over USB (FEL mode) with the bundled **xfel** tool.
   cosmetic boot failures: the LSB-wrapped `zram.service` (duplicate of the native
   systemd unit; the kernel has zram built in) and `proc-fs-nfsd.mount` (no NFSD in
   the kernel).
+- **`recipes-core/base-files/`** — bbappend that replaces the stock one-line
+  `/etc/issue` generator with the branded login banner, and installs the matching
+  `/etc/issue.net` and `/etc/motd`.
+- **`recipes-core/os-release/`** — bbappend adding `VARIANT`, `HOME_URL`,
+  `SUPPORT_URL` and a build-number `BUILD_ID` to `/etc/os-release`.
 - **`recipes-core/psplash/`** — bbappend that rebrands the framebuffer boot
   splash with `files/company-logo.png` (the BEITLAB green-brain logo on black,
   Apple-startup style; swap the PNG to use different artwork).

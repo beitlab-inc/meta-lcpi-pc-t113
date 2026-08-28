@@ -34,10 +34,26 @@ echo 0x0104 > idProduct         # Multifunction Composite Gadget
 echo 0x0100 > bcdDevice
 echo 0x0200 > bcdUSB             # USB 2.0
 
+# Device identity. The @BEITLAB_*@ placeholders are substituted at build time
+# from the distro/machine variables (see usbgadget.bb), so the serial carries
+# the exact BeitlabOS release + internal build number that is running.
+#
+# A firmware release is not unique per unit though, and USB hosts key their
+# persistent interface names off the serial number - two boards on the same
+# host would collide. So append the SoC's factory-programmed 128-bit SID when
+# the nvmem node is there (CONFIG_NVMEM_SUNXI_SID), and fall back to the plain
+# release string if it isn't.
+SERIAL="@BEITLAB_SERIAL@"
+sid_nvmem=$(ls /sys/bus/nvmem/devices/sunxi-sid*/nvmem 2>/dev/null | head -n1)
+if [ -n "$sid_nvmem" ] && [ -r "$sid_nvmem" ]; then
+	uid=$(od -An -tx1 -N16 "$sid_nvmem" 2>/dev/null | tr -d ' \n' || true)
+	[ -n "$uid" ] && SERIAL="$SERIAL-$(printf '%s' "$uid" | tail -c 8)"
+fi
+
 mkdir -p strings/0x409
-echo "BEITLAB-LCPI-0001" > strings/0x409/serialnumber
-echo "BEITLAB"           > strings/0x409/manufacturer
-echo "LCPI-PC-T113"      > strings/0x409/product
+echo "$SERIAL"           > strings/0x409/serialnumber
+echo "@BEITLAB_VENDOR@"  > strings/0x409/manufacturer
+echo "@BEITLAB_PRODUCT@" > strings/0x409/product
 
 mkdir -p configs/c.1/strings/0x409
 echo "CDC-ECM (USB Ethernet)" > configs/c.1/strings/0x409/configuration
