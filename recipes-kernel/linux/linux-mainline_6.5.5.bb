@@ -155,4 +155,96 @@ EOF
 };
 EOF
     fi
+
+    # GT911 on the P4 6-pin CTP flex (MangoPi MQ-Dual / LCPI schematic):
+    #   I2C2 = PE12/PE13, 7-bit addr 0x14
+    #   INT  = PB3, RST = PB2
+    # The inherited node used the 8-bit write address 0x28 and the SPI0
+    # pins PC3/PC2. That reset sequence never reached the chip, so the
+    # Goodix probe timed out talking to 0x14 (-110).
+    sed -i 's/gt911: touchscreen@28/gt911: touchscreen@14/' "${dts}"
+    sed -i '/gt911: touchscreen@14 {/,/};/{s/reg = <0x28>;/reg = <0x14>;/}' "${dts}"
+    sed -i '/gt911: touchscreen@14 {/,/};/{
+        s/interrupts = <2 3 IRQ_TYPE_EDGE_FALLING>;/interrupts = <1 3 IRQ_TYPE_EDGE_FALLING>;/
+        s/irq-gpios = <\&pio 2 3 GPIO_ACTIVE_HIGH>;/irq-gpios = <\&pio 1 3 GPIO_ACTIVE_HIGH>;/
+        s/reset-gpios = <\&pio 2 2 GPIO_ACTIVE_HIGH>;/reset-gpios = <\&pio 1 2 GPIO_ACTIVE_HIGH>;/
+    }' "${dts}"
+
+    if ! grep -q "LCPI GT911 touch on P4" "${dts}"; then
+        cat >> "${dts}" <<'EOF'
+
+/* --- LCPI GT911 touch on P4 (CTP flex); free unused SPI-NAND pinmux --- */
+&spi0 {
+	status = "disabled";
+};
+EOF
+    fi
+
+    # Without an alias, i2c2 registers as /dev/i2c-0 (hence "0-0014" in dmesg).
+    if ! grep -q "LCPI i2c2 alias" "${dts}"; then
+        cat >> "${dts}" <<'EOF'
+
+/* --- LCPI i2c2 alias so the CTP bus is /dev/i2c-2 --- */
+/ {
+	aliases {
+		i2c2 = &i2c2;
+	};
+};
+EOF
+    fi
+
+    # P4 has no documented pull-up on CTP_RST. The Goodix driver releases
+    # reset then switches the GPIO to input; the line floats, the chip
+    # drops back into reset, and i2cdetect on i2c2 is empty. Keep RST
+    # driven released, pull it up in pinctrl, and run TWI2 at 100 kHz.
+    goodix_c="${S}/drivers/input/touchscreen/goodix.c"
+    if [ -f "${goodix_c}" ] && ! grep -q "LCPI keep GT911 RST driven" "${goodix_c}"; then
+        sed -i '/Put the reset pin back in to input/,/return 0;/{
+            s/if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_GPIO)/if (0 \/* LCPI keep GT911 RST driven *\/ \&\& ts->irq_pin_access_method == IRQ_PIN_ACCESS_GPIO)/
+        }' "${goodix_c}"
+    fi
+
+    if ! grep -q "LCPI GT911 RST hold" "${dts}"; then
+        cat >> "${dts}" <<'EOF'
+
+/* --- LCPI GT911 RST hold + 100 kHz TWI2 --- */
+&i2c2 {
+	clock-frequency = <100000>;
+};
+EOF
+    fi
+
+    # Live board: pinctrl-0 on the GT911 node claimed PB2, then
+    # reset-gpios failed with -EINVAL (-22) and probe aborted.
+    if ! grep -q "LCPI GT911 no extra pinctrl" "${dts}"; then
+        cat >> "${dts}" <<'EOF'
+
+/* --- LCPI GT911 no extra pinctrl (PB2 is reset-gpios only) --- */
+&gt911 {
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-names;
+};
+EOF
+    fi
+
+    # Live board: pinmux PE12/PE13 is already i2c2, but every xfer logs
+    # "mv64xxx: I2C bus locked" and times out (-110). The inherited
+    # sun8i-t113s.dtsi attaches DMA to i2c2; that path never completes
+    # an IRQ on this SoC. Drop DMA and enable on-chip pull-ups so SCL
+    # can rise even if the panel flex has none.
+    if ! grep -q "LCPI i2c2 PIO no-DMA" "${dts}"; then
+        cat >> "${dts}" <<'EOF'
+
+/* --- LCPI i2c2 PIO no-DMA (bus-locked workaround) --- */
+&i2c2_pe12_pins {
+	bias-pull-up;
+};
+
+&i2c2 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+	clock-frequency = <100000>;
+};
+EOF
+    fi
 }

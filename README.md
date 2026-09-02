@@ -39,12 +39,13 @@ This layer boots the board with a mainline **Linux 6.5.5** kernel and the
 | WiFi (RTL8189FTV)          |   ✅   | out-of-tree `rtl8189ftv` module |
 | Boot (AWBoot + zImage)     |   ✅   | |
 | 4.3" 800×480 RGB LCD       |   ✅   | `rocktech,rk070er9427`, RGB666 18-bit bus |
-| GT911 capacitive touch     |   ✅   | Goodix GT911 on I²C |
+| GT911 capacitive touch     |   🔧   | P4 CTP flex; I²C address + spi0 pinmux fixed; verify with `touchtest` |
 | Internal analog audio      |   ✅¹  | backported self-contained `sun20i-codec` |
 | GStreamer media (2D)       |   ✅   | `fbdevsink` / `kmssink`, no GL |
 | Branded boot splash        |   ✅   | `psplash` logo + rotating spinner on black (no penguin) |
 | BeitlabOS identity         |   ✅   | `beitlabos` distro: login banner, MOTD, `/etc/os-release` |
-| UART-controlled LCD game   |   ✅   | `pingpong` boots on the panel |
+| LVGL system dashboard      |   ✅   | On-demand CPU/RAM/network UI; no touch required |
+| LCD games                  |   ✅   | `pingpong` and Doom, launched on demand |
 
 ¹ The codec driver is built in and powers its own on-die analog LDOs, so the card
 enumerates as `aplay -l` card 0 with no extra regulator driver. The output paths
@@ -85,7 +86,12 @@ meta-lcpi-pc-t113/
 │   ├── psplash/                           # boot-splash bbappend + company-logo.png
 │   ├── usbgadget/                         # OTG CDC-ECM USB-Ethernet gadget (PC/Mac)
 │   └── systemd/systemd-conf/              # wlan0.network + usb0.network
-├── recipes-apps/                          # sample apps (mycpp, myserial, piano-player)
+├── recipes-apps/
+│   ├── beitlab-dashboard/                 # LVGL clock/system/network dashboard
+│   ├── touchtest/                         # GT911 P4 touch bring-up grid
+│   ├── lofi-radio/                        # internet lofi / chillhop player
+│   └── ...                                # sample apps (mycpp, myserial)
+├── recipes-graphics/lvgl/                 # minimal LVGL 8.3 for fbdev applications
 ├── recipes-games/pingpong/                # UART-controlled framebuffer Pong (LCD kiosk)
 │   ├── pingpong_1.0.bb
 │   ├── README.md                          # how to enable/disable the game + UART
@@ -120,7 +126,7 @@ git clone git://git.yoctoproject.org/poky -b dunfell
 cd poky/
 git clone https://git.yoctoproject.org/meta-arm -b dunfell
 git clone https://github.com/openembedded/meta-openembedded.git -b dunfell
-git clone https://github.com/AndresJejen/meta-lcpi-pc-t113.git -b dunfell
+git clone https://github.com/beitlab-inc/meta-lcpi-pc-t113.git -b dunfell
 cd ../
 ```
 
@@ -268,8 +274,11 @@ overlay), so a plain `bitbake lcpi-pc-t113-image` produces a fully-featured imag
 **Display (LCD)** — the kernel recipe keeps the BSP's default panel
 `rocktech,rk070er9427` (**4.3" 800×480**, RGB666 on the 18-bit `lcd_rgb666_pins`
 bus), drops CMA to 32 MB, adds `console=tty0` (mirror the log to the panel) and
-`consoleblank=0` (never blank the LCD). Touch is the Goodix **GT911** (enabled in
-`lcpi-av.cfg`).
+`consoleblank=0` (never blank the LCD). Touch is the Goodix **GT911** on the **P4**
+CTP flex (I²C2 / PE12-PE13, INT=PC3, RST=PC2). The kernel fragment
+`lcpi-av.cfg` builds the driver in; `do_configure_prepend` then corrects the
+7-bit address to `0x14`, moves INT/RST to **PB3/PB2** (the P4 flex, not the
+inherited SPI0 PC3/PC2 pair), and disables unused `spi0`.
 
 **Audio** — mainline 6.5.5 has **no** driver for the T113s/D1 internal analog
 codec (upstreamed only ~v6.13), so the kernel recipe backports Samuel Holland's
@@ -341,12 +350,51 @@ swap stretches the 128 MB DDR3.
 Runtime bring-up:
 ```bash
 fbi -d /dev/fb0 -T 1 image.png       # show an image on the LCD (fbida)
+game start touchtest                 # visual GT911 test (grid + corner targets)
 evtest                               # pick the Goodix device, tap the screen
+i2cdetect -y 2                       # GT911 should ACK at 0x14 (or 0x5d)
 gst-launch-1.0 videotestsrc ! fbdevsink   # test pattern to the framebuffer
 gst-launch-1.0 videotestsrc ! kmssink     # or straight to KMS/DRM
 ```
 > Note: `pingpong` owns `/dev/fb0` + `/dev/tty1` while it runs — `systemctl stop
 > pingpong` first if you want the framebuffer for `fbi`/GStreamer.
+
+**Beitlab dashboard (`recipes-apps/beitlab-dashboard/`)** — a lightweight LVGL
+8.3 interface designed specifically for the 800×480 panel and 128 MB RAM. It
+shows the BeitlabOS product/board/release identity, an NTP clock in the local
+timezone, city/region/country from IP geolocation, CPU and memory load,
+temperature, rootfs use, uptime, IP/link state, WiFi signal, cumulative network
+traffic and separate RX/TX rates plotted over the last ten seconds. Metrics come
+from `/proc` and `/sys`; location is a periodic `curl` to `ip-api.com`.
+
+The dashboard is installed but disabled at boot until it has been validated on
+the real panel:
+
+```bash
+systemctl start beitlab-dashboard       # take over the LCD now
+systemctl stop beitlab-dashboard        # restore the LCD login
+systemctl enable beitlab-dashboard      # make it the normal boot UI
+beitlab-dashboard --once                # print one metrics sample, no LCD
+```
+
+Touch is deliberately not required. Starting `pingpong` or Doom pauses the
+dashboard while the game owns `/dev/fb0`; `game stop`, normal game exit or a
+game crash starts the dashboard again.
+
+**Lofi radio (`recipes-apps/lofi-radio/`)** — a background Icecast/Shoutcast
+player. It uses GStreamer (`souphttpsrc` + `mpg123` + `alsasink`) and does not
+take the LCD, so it can play while the dashboard is up:
+
+```bash
+lofi start          # SomaFM Groove Salad by default
+lofi list
+lofi next
+lofi status
+lofi stop
+```
+
+Stations are `/etc/lofi-radio/stations` (`name|url`). Only direct MP3 streams
+fit this board; YouTube and HLS are out.
 
 **Boot splash (company logo + progress bar)** — instead of the kernel penguins
 and scrolling boot logs, the panel shows a branded [psplash](https://git.yoctoproject.org/psplash/)
@@ -384,23 +432,22 @@ spinner size/position/colour live in the spinner patch
 (`PSPLASH_SPINNER_*` and the `fg[]`/`bg[]` arrays). To drop the splash entirely,
 remove `psplash` / `psplash-default` from the image recipe.
 
-**LCD game (kiosk)** — `recipes-games/pingpong` is a tiny, dependency-free
-framebuffer Pong that boots on the panel instead of a login prompt. It draws
-straight to `/dev/fb0`, puts `/dev/tty1` into `KD_GRAPHICS`, and reads controls
-from the UART (`/dev/ttyS0`):
+**LCD games** — `recipes-games/pingpong` and `recipes-games/doom` draw straight
+to `/dev/fb0`, put `/dev/tty1` into `KD_GRAPHICS`, and are launched on demand.
+They never take over the serial console. `touchtest` uses the same launcher to
+prove the GT911 on P4:
 
-- Left paddle `w`/`s` (or ↑/↓), right paddle `i`/`k` (disables the AI),
-  serve `space`, quit `q`.
-- `pingpong.service` `Conflicts=` `getty@tty1` + `serial-getty@ttyS0`, so it owns
-  the VT and the serial port. **Your shell is SSH** while it runs. To get a
-  serial/LCD console back:
-  ```bash
-  systemctl stop pingpong
-  systemctl start serial-getty@ttyS0    # optional: serial login
-  ```
-- Prefer a normal login on the LCD instead of the game? Set
-  `SYSTEMD_AUTO_ENABLE = "disable"` in `recipes-games/pingpong/pingpong_1.0.bb`
-  and re-add a `getty@tty1` enable in the image recipe.
+```bash
+game start touchtest       # grid + corner targets on the glass
+game start pingpong
+game ctl                   # forward this SSH/UART terminal's keys
+game stop                  # stop the game and return to the dashboard
+```
+
+A USB keyboard works without `game ctl`. The game services conflict with the
+dashboard and LCD getty, while a shared lock prevents two framebuffer
+applications from drawing at once. On every exit, including crashes, the game
+helper restores the VT and starts `beitlab-dashboard.service`.
 
 ---
 
@@ -503,8 +550,8 @@ You can also flash over USB (FEL mode) with the bundled **xfel** tool.
   a kernel module.
 - **`recipes-extended/images/lcpi-pc-t113-image.bb`** — the image: core boot +
   cmdline tools, WiFi tooling, framebuffer tools, ALSA utils, the `AV_TOOLS`
-  group (GStreamer, ALSA, fbida, v4l-utils, evtest, zram, `pingpong`), and debug
-  utilities. At rootfs post-process it lowers the RTL8189 log level and masks two
+  group (GStreamer, ALSA, fbida, v4l-utils, evtest, zram, dashboard and games),
+  and debug utilities. At rootfs post-process it lowers the RTL8189 log level and masks two
   cosmetic boot failures: the LSB-wrapped `zram.service` (duplicate of the native
   systemd unit; the kernel has zram built in) and `proc-fs-nfsd.mount` (no NFSD in
   the kernel).
@@ -516,9 +563,14 @@ You can also flash over USB (FEL mode) with the bundled **xfel** tool.
 - **`recipes-core/psplash/`** — bbappend that rebrands the framebuffer boot
   splash with `files/company-logo.png` (the BEITLAB green-brain logo on black,
   Apple-startup style; swap the PNG to use different artwork).
-- **`recipes-games/pingpong/`** — the UART-controlled framebuffer game shown on
-  the LCD (`pingpong.c` + `pingpong.service`), auto-enabled as a kiosk. It quits
-  psplash in `ExecStartPre` before grabbing the framebuffer.
+- **`recipes-graphics/lvgl/`** — pinned LVGL 8.3 shared library with a minimal
+  software-rendering configuration for the direct framebuffer stack.
+- **`recipes-apps/beitlab-dashboard/`** — branded clock and system/network
+  monitor. It is on demand by default and becomes the boot UI with
+  `systemctl enable beitlab-dashboard`.
+- **`recipes-games/pingpong/`** — the framebuffer game (`pingpong.c` +
+  `pingpong.service`), launched on demand. It quits psplash and pauses the
+  dashboard before grabbing the framebuffer.
 - **`recipes-multimedia/gstreamer/`** — `gstreamer1.0-plugins-bad` bbappend that
   enables `kms` and removes the `gl` PACKAGECONFIG.
 - **`recipes-multimedia/alsa-unmute/`** — oneshot boot service that forces the
@@ -526,8 +578,8 @@ You can also flash over USB (FEL mode) with the bundled **xfel** tool.
   every boot without a manual `alsamixer`. Ordered before the chime and the game.
 - **`recipes-multimedia/boot-chime/`** — a synthesised power-on chime
   (`bootchime.c`) played once early in boot.
-- **`recipes-apps/`** — small example payloads (`mycpp`, `myserial`,
-  `piano-player`) showing how to add your own applications.
+- **`recipes-apps/`** — small example payloads (`mycpp`, `myserial`) showing how
+  to add your own applications.
 
 ---
 

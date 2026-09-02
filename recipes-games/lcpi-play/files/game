@@ -4,7 +4,7 @@
 # `game --run` holds /run/lcpi-game.lock for the lifetime of the binary.
 set -eu
 
-GAMES="pingpong doom"
+GAMES="pingpong doom touchtest"
 LOCK=/run/lcpi-game.lock
 NAMEFILE=/run/lcpi-game.name
 INPUT=/run/lcpi-game.input
@@ -51,14 +51,20 @@ valid_game() {
     return 1
 }
 
-# Put the LCD VT back in text mode and bring the LCD getty back.
+# Release graphics mode and return to the Beitlab dashboard when it is
+# installed. Images without the dashboard retain the original LCD getty
+# fallback.
 # Do NOT touch /dev/ttyS0: `stty` or restarting serial-getty (TTYVHangup=yes)
 # hangs up PB6/PB7 and freezes the login that started the game.
 cmd_restore() {
     /usr/bin/lcpi-restore-console 2>/dev/null || true
     stty sane < /dev/tty1 2>/dev/null || true
-    systemctl start --no-block getty@tty1.service 2>/dev/null || true
     rm -f "$NAMEFILE" "$INPUT"
+    if systemctl cat beitlab-dashboard.service >/dev/null 2>&1; then
+        systemctl start --no-block beitlab-dashboard.service 2>/dev/null || true
+    else
+        systemctl start --no-block getty@tty1.service 2>/dev/null || true
+    fi
 }
 
 # Held by systemd ExecStart: flock the mutex then exec the real binary.
@@ -130,7 +136,7 @@ cmd_stop() {
         systemctl stop "${g}.service" 2>/dev/null || true
     done
     cmd_restore
-    echo "Stopped $cur. Consoles restored."
+    echo "Stopped $cur. Returning to the dashboard."
 }
 
 cmd_status() {
@@ -173,7 +179,7 @@ case "$cmd" in
         usage
         [ -n "$cmd" ] || exit 2
         ;;
-    pingpong|doom)
+    pingpong|doom|touchtest)
         cmd_start "$cmd"
         ;;
     *)

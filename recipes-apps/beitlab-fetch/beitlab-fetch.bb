@@ -4,8 +4,9 @@ from github.com/beitlab-inc as terminal art next to a block of system \
 information (board, kernel, uptime, CPU, memory, zram, rootfs, SoC \
 temperature, address). neofetch needs bash and fastfetch has no recipe on \
 this release, so this is a dependency-free POSIX sh implementation that reads \
-/proc and /sys directly. Runs automatically on interactive login via \
-/etc/profile.d and works over the 115200 baud UART, the LCD getty and SSH."
+/proc and /sys directly. It is run on demand; set BEITLAB_FETCH_ON_LOGIN to 1 \
+to also print it on interactive login. Works over the 115200 baud UART, the \
+LCD getty and SSH."
 HOMEPAGE = "https://github.com/beitlab-inc"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
@@ -29,8 +30,10 @@ BEITLAB_BOARD ?= "${MACHINE}"
 BEITLAB_YOCTO_CODENAME ?= "${DISTRO_CODENAME}"
 BEITLAB_YOCTO_VERSION ?= "${DISTRO_VERSION}"
 
-# Set to "0" to install the tool without the automatic login banner.
-BEITLAB_FETCH_ON_LOGIN ?= "1"
+# beitlab-fetch is a command, not a login banner: the /etc/profile.d hook is
+# installed but inert by default. Set to "1" (here, in local.conf, or in
+# /etc/beitlab-fetch.conf on the target) to print it on interactive login.
+BEITLAB_FETCH_ON_LOGIN ?= "0"
 
 # The generated config embeds MACHINE/DISTRO identity, so it must not be
 # shared between machines via sstate.
@@ -67,7 +70,8 @@ BEITLAB_FETCH_ASCII=0
 # manager; set to 0 if login latency matters more than the number.
 BEITLAB_FETCH_PACKAGES=1
 
-# Print the banner from /etc/profile.d on interactive login shells.
+# 1 prints the summary from /etc/profile.d on interactive login shells; 0 means
+# it only runs when you type `beitlab-fetch`.
 BEITLAB_FETCH_ON_LOGIN=${BEITLAB_FETCH_ON_LOGIN}
 BEITLAB_FETCH_CONF_EOF
     chmod 0644 ${D}${sysconfdir}/beitlab-fetch.conf

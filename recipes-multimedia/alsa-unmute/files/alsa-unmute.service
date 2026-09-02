@@ -5,7 +5,7 @@ DefaultDependencies=no
 After=sysinit.target alsa-restore.service
 Wants=sysinit.target
 # Guarantee the codec is unmuted before the chime plays or the game opens the PCM.
-Before=multi-user.target boot-chime.service pingpong.service doom.service
+Before=multi-user.target boot-chime.service pingpong.service doom.service lofi-radio.service
 
 [Service]
 Type=oneshot

@@ -1,5 +1,5 @@
 SUMMARY = "Background start/stop helper for LCPI framebuffer games"
-DESCRIPTION = "Installs /usr/bin/game so pingpong, doom and later titles can \
+DESCRIPTION = "Installs /usr/bin/game so pingpong, doom, touchtest and later titles can \
 be launched from a login shell in the background. `game ctl` attaches the \
 SSH/serial terminal as a keyboard (FIFO). Only one game is allowed to run \
 at a time; `game stop` terminates the active one and restores the LCD."

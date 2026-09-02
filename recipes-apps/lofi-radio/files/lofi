@@ -1,0 +1,62 @@
+#!/bin/sh
+# Start, stop and change stations for the BeitlabOS lofi radio.
+set -eu
+
+usage() {
+    cat <<EOF
+Usage:
+  lofi start [N]   start the radio (optional station number, 1-based)
+  lofi stop        stop playback
+  lofi next        next station
+  lofi prev        previous station
+  lofi status      show the running station and stream title
+  lofi list        list the configured stations
+
+The radio is audio-only. The dashboard can stay on the LCD.
+EOF
+}
+
+unit=lofi-radio.service
+
+case "${1:-}" in
+    start)
+        if [ -n "${2:-}" ]; then
+            systemctl stop "$unit" 2>/dev/null || true
+            systemctl set-environment LOFI_STATION="$2"
+        fi
+        systemctl start "$unit"
+        echo "lofi radio started. Use: lofi next | lofi status | lofi stop"
+        ;;
+    stop)
+        systemctl unset-environment LOFI_STATION 2>/dev/null || true
+        systemctl stop "$unit"
+        echo "lofi radio stopped."
+        ;;
+    next)
+        systemctl kill -s USR1 "$unit"
+        ;;
+    prev)
+        systemctl kill -s USR2 "$unit"
+        ;;
+    status)
+        if systemctl is-active --quiet "$unit"; then
+            echo "running: $(cat /run/lofi-radio.station 2>/dev/null || echo unknown)"
+            echo "title:   $(cat /run/lofi-radio.title 2>/dev/null || echo -)"
+            systemctl --no-pager --full status "$unit" | sed -n '1,8p'
+        else
+            echo "running: (none)"
+        fi
+        ;;
+    list)
+        /usr/bin/lofi-radio --list
+        ;;
+    -h|--help|help|"")
+        usage
+        [ -n "${1:-}" ] || exit 2
+        ;;
+    *)
+        echo "Unknown command '$1'." >&2
+        usage >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,22 @@
+[Unit]
+Description=GT911 touch test on the LCD
+# Own the LCD VT only. Never Conflict with serial-getty@ttyS0.
+Conflicts=getty@tty1.service beitlab-dashboard.service
+After=systemd-user-sessions.service getty@tty1.service
+After=psplash-start.service psplash-systemd.service
+
+[Service]
+Type=simple
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+TTYReset=no
+TTYVHangup=no
+ExecStartPre=-/usr/bin/psplash-write "QUIT"
+ExecStartPre=-/bin/sleep 1
+ExecStart=/usr/bin/game --run touchtest /usr/bin/touchtest -f /dev/fb0 -t /dev/tty1
+ExecStopPost=-/usr/bin/game --restore-console
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

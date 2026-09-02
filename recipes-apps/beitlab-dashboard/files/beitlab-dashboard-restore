@@ -1,0 +1,14 @@
+#!/bin/sh
+# Restore the LCD login only when a game is not taking over from the dashboard.
+
+/usr/bin/lcpi-restore-console 2>/dev/null || true
+
+for game in pingpong doom; do
+    case "$(systemctl is-active "$game.service" 2>/dev/null || true)" in
+        active|activating|reloading)
+            exit 0
+            ;;
+    esac
+done
+
+systemctl start --no-block getty@tty1.service 2>/dev/null || true

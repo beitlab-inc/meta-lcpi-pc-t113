@@ -1,0 +1,9 @@
+# BeitlabOS lofi radio stations
+# name|url
+# Direct Icecast/Shoutcast MP3 streams only. YouTube and HLS are too heavy
+# for this board.
+SomaFM Groove Salad|http://ice1.somafm.com/groovesalad-128-mp3
+SomaFM Lush|http://ice1.somafm.com/lush-128-mp3
+SomaFM Drone Zone|http://ice1.somafm.com/dronezone-128-mp3
+I Love Chillhop|http://streams.ilovemusic.de/iloveradio17.mp3
+Chillhop Radio|http://ice.chillhop.com/chillhop-128

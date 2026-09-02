@@ -1,0 +1,21 @@
+[Unit]
+Description=BeitlabOS lofi internet radio
+Documentation=file:/usr/share/doc/lofi-radio/README
+After=network.target alsa-unmute.service
+Wants=alsa-unmute.service
+
+[Service]
+Type=simple
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+Environment=GST_DEBUG=1
+ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' on
+ExecStartPre=-/usr/bin/amixer -q sset 'Headphone' 100%
+ExecStartPre=-/usr/bin/amixer -q sset 'DAC' 100%
+ExecStart=/bin/sh -c 'if [ -n "${LOFI_STATION:-}" ]; then exec /usr/bin/lofi-radio --station $((LOFI_STATION-1)); else exec /usr/bin/lofi-radio; fi'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

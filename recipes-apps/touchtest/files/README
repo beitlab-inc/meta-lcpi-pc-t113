@@ -1,0 +1,28 @@
+GT911 TOUCH TEST
+
+Bring-up UI for the capacitive overlay on the 4.3" 800x480 panel (P4 CTP
+flex, Goodix GT911 on I2C2).
+
+    game start touchtest     # LCD switches to the grid
+    game stop                # back to the dashboard / getty
+
+Or, if you are already on the LCD console:
+
+    touchtest
+
+Tap the four corner rings. They turn green; all four show PASS. A coloured
+dot follows each contact (up to five), and a short trail is left behind so
+you can see whether X/Y are swapped or inverted.
+
+    q        quit (or `game stop` from SSH/UART)
+    c        clear trail and corner hits
+    -x -y    invert an axis without rebuilding
+    -s       swap X/Y in userspace
+    -d DEV   force an evdev node
+
+If the banner says NO TOUCH DEVICE the kernel never bound the GT911:
+
+    dmesg | grep -iE 'goodix|gt911'
+    ls /sys/bus/i2c/devices/
+    i2cdetect -y 2
+    evtest

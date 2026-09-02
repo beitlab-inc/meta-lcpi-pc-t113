@@ -1,0 +1,25 @@
+[Unit]
+Description=BeitlabOS system dashboard on the LCD
+Documentation=file:/usr/share/doc/beitlab-dashboard/README
+Conflicts=getty@tty1.service pingpong.service doom.service
+After=systemd-user-sessions.service getty@tty1.service
+After=psplash-start.service psplash-systemd.service
+After=network.target
+Wants=systemd-timesyncd.service
+
+[Service]
+Type=simple
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+TTYReset=no
+TTYVHangup=no
+ExecStartPre=-/usr/bin/psplash-write "QUIT"
+ExecStartPre=-/bin/sleep 1
+ExecStart=/usr/bin/flock -n /run/lcpi-game.lock /usr/bin/beitlab-dashboard -f /dev/fb0 -t /dev/tty1
+ExecStopPost=-/usr/bin/beitlab-dashboard-restore
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

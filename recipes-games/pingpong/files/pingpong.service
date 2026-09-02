@@ -2,7 +2,7 @@
 Description=Pong on the LCD (USB keyboard)
 # Own the LCD VT only. Never Conflict with serial-getty@ttyS0: that unit's
 # TTYVHangup=yes would hang up PB6/PB7 (UART3 / ttyS0) and freeze the shell.
-Conflicts=getty@tty1.service
+Conflicts=getty@tty1.service beitlab-dashboard.service
 After=systemd-user-sessions.service getty@tty1.service
 After=psplash-start.service psplash-systemd.service
 Wants=alsa-unmute.service

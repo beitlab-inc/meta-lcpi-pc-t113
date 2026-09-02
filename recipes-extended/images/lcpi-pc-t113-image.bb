@@ -6,7 +6,6 @@ CORE_IMAGE_EXTRA_INSTALL += " util-linux"
 # alsa-tools linux-firmware
 IMAGE_INSTALL = "\
     mycpp \
-    piano-player \
     myserial \
     packagegroup-core-boot \
     wireless-regdb \
@@ -39,6 +38,7 @@ WIFI_TOOLS = " \
 
 MISC_TOOLS += " \
     beitlab-fetch \
+    tzdata \
     can-utils \
     libsocketcan \
     strace \
@@ -80,9 +80,13 @@ AV_TOOLS = " \
     fbida \
     v4l-utils \
     evtest \
+    i2c-tools \
     zram \
+    beitlab-dashboard \
+    lofi-radio \
     pingpong \
     doom \
+    touchtest \
     lcpi-play \
     psplash \
     psplash-default \
@@ -120,10 +124,19 @@ mask_lsb_zram() {
     ln -sf /dev/null ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/zram.service
 }
 
+# Keep the wall clock on UTC from the internet; the dashboard then applies the
+# timezone reported by IP geolocation so the LCD clock matches the board's site.
+enable_timesyncd() {
+    install -d ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/sysinit.target.wants
+    ln -sf /lib/systemd/system/systemd-timesyncd.service \
+        ${IMAGE_ROOTFS}${sysconfdir}/systemd/system/sysinit.target.wants/systemd-timesyncd.service
+}
+
 # LCD and serial consoles stay at the login prompt after boot. Framebuffer
 # games are started from a shell (SSH or UART) in the background:
 #   game start pingpong
 #   game start doom
+#   game start touchtest
 #   game ctl            # this terminal is the keyboard (Ctrl-] detaches)
 #   game stop
 # Only one game may run at a time; a second `game start` is refused until
@@ -131,5 +144,5 @@ mask_lsb_zram() {
 # serial-getty@ttyS0 — that is the PB6/PB7 debug UART. Play with `game ctl`
 # from SSH/serial, or a USB keyboard on the USB-A host port.
 
-ROOTFS_POSTPROCESS_COMMAND += "set_8189fs_loglevel; mask_nfsd_mount; mask_lsb_zram;"
+ROOTFS_POSTPROCESS_COMMAND += "set_8189fs_loglevel; mask_nfsd_mount; mask_lsb_zram; enable_timesyncd;"
 IMAGE_ROOTFS_EXTRA_SPACE_append = "${@bb.utils.contains("DISTRO_FEATURES", "systemd", " + 4096", "" ,d)}"

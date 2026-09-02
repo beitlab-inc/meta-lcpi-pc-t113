@@ -1,0 +1,24 @@
+BEITLAB DASHBOARD
+
+Start the dashboard on the LCD:
+    systemctl start beitlab-dashboard
+
+Stop it and return to the LCD login:
+    systemctl stop beitlab-dashboard
+
+Make it the default LCD interface at boot:
+    systemctl enable beitlab-dashboard
+
+Return to on-demand operation:
+    systemctl disable beitlab-dashboard
+
+Starting pingpong or Doom stops the dashboard while the game owns the
+framebuffer. `game stop`, a normal game exit, or a game crash returns to the
+dashboard automatically.
+
+The clock is NTP-synced by systemd-timesyncd. The dashboard then asks an
+IP geolocation service for city, region, country and timezone, writes
+/etc/localtime and shows that location under the clock.
+
+Collect and print one sample without opening the framebuffer:
+    beitlab-dashboard --once

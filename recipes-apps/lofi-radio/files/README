@@ -1,0 +1,16 @@
+LOFI RADIO
+
+Internet audio player for BeitlabOS. It streams a short list of MP3
+Icecast/Shoutcast stations through GStreamer and ALSA. It does not take
+the LCD, so the dashboard can stay visible.
+
+    lofi start          # first station
+    lofi start 3        # station number from `lofi list`
+    lofi next
+    lofi prev
+    lofi status
+    lofi stop
+
+Stations live in /etc/lofi-radio/stations as `name|url` lines. Only
+direct audio streams work; YouTube and HLS playlists are too heavy for
+the T113.
